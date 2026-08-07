@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a-wizard.local/schemas/mix.segments.schema.json",
+  "title": "MixSegments",
+  "type": "object",
+  "required": ["segments", "words"],
+  "properties": {
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "text", "speaker"],
+        "properties": {
+          "start": { "type": "number" },
+          "end": { "type": "number" },
+          "text": { "type": "string" },
+          "speaker": { "type": "string" }
+        }
+      }
+    },
+    "words": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "text"],
+        "properties": {
+          "start": { "type": "number" },
+          "end": { "type": "number" },
+          "text": { "type": "string" },
+          "speaker": { "type": ["string", "null"] },
+          "channel": { "type": ["integer", "null"] },
+          "ambiguous": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

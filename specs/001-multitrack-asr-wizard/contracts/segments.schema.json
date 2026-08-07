@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/a-wizard/segments.schema.json",
+  "title": "a-wizard Segments",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["start_ms", "end_ms", "text", "speaker"],
+    "properties": {
+      "start_ms": { "type": "integer", "minimum": 0 },
+      "end_ms": { "type": "integer", "minimum": 0 },
+      "text": { "type": "string", "minLength": 1 },
+      "speaker": { "type": "string", "minLength": 1 }
+    },
+    "additionalProperties": false
+  }
+}

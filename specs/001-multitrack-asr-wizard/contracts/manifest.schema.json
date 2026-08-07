@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/a-wizard/manifest.schema.json",
+  "title": "a-wizard Project Manifest",
+  "type": "object",
+  "required": ["schema_version", "source", "tracks", "transcription_defaults", "stages"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "project_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["basename", "audio_stream_count"],
+      "properties": {
+        "path": { "type": "string" },
+        "basename": { "type": "string" },
+        "duration_ms": { "type": ["integer", "null"] },
+        "audio_stream_count": { "type": "integer", "minimum": 0 },
+        "content_fingerprint": { "type": ["string", "null"] }
+      }
+    },
+    "transcription_defaults": {
+      "type": "object",
+      "properties": {
+        "model": { "type": "string" },
+        "language": { "type": "string" },
+        "compute_type": { "type": "string" },
+        "device": { "type": "string" },
+        "initial_prompt": { "type": ["string", "null"] },
+        "initial_prompt_reviewed": { "type": "boolean" }
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "wav", "mode", "status"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "wav": { "type": "string" },
+          "mode": { "enum": ["pending", "plain", "diarized", "skipped"] },
+          "status": { "enum": ["pending", "extracted", "transcribed", "skipped"] },
+          "language": { "type": "string", "description": "Legacy; ASR uses transcription_defaults.language" },
+          "plain_speaker": { "type": ["string", "null"], "description": "SPEAKER_T{n} for plain" },
+          "skip_reason": { "type": ["string", "null"] },
+          "initial_prompt": { "description": "Legacy; ASR uses transcription_defaults.initial_prompt" },
+          "speaker_map": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional legacy remap" },
+          "speaker_map_reviewed": { "type": "boolean" },
+          "segments": { "type": "string" },
+          "transcript_txt": { "type": "string" }
+        }
+      }
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "enum": ["pending", "running", "succeeded", "failed", "stale", "interrupted"]
+          },
+          "signature": { "type": ["string", "null"] },
+          "attempt_id": { "type": ["string", "null"] },
+          "adapter_id": { "type": ["string", "null"] },
+          "error_code": { "type": ["string", "null"] },
+          "output_digests": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      }
+    },
+    "speaker_glyphs": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "adapters": {
+      "type": "object",
+      "properties": {
+        "asr": { "type": "string" },
+        "diarization": { "type": "string" },
+        "media": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": true
+}
