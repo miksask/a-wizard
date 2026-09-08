@@ -1,12 +1,12 @@
 # A-WIZARD
 
-Local, resume-safe multitrack ASR — fast on Apple Silicon (~20× realtime with MLX): one Whisper pass on the mix, energy-based speakers, clean dialog. For interviews, one-on-one calls, and OBS.
+Local, resume-safe multitrack ASR — fast on Apple Silicon (mlx-whisper turbo ~5–10× realtime): one Whisper pass on the mix, energy-based speakers, clean dialog. For interviews, one-on-one calls, and OBS.
 
 <p align="center">
   <img src="A-WIZARD.png" alt="UnGPT icon"/>
 </p>
 
-The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, and `specs/002-mlx-mixdown-pipeline/`.
+The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, and `specs/003-configure-cli/`.
 
 ## Features
 
@@ -20,6 +20,8 @@ The project is organized with [GitHub Spec Kit](https://github.com/github/spec-k
 - Commands: `run`, `status`, `plan`, `init`, `configure`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
 
 ## Installation
+
+Short checklist: [README-FAST-INSTALL.md](README-FAST-INSTALL.md).
 
 ```bash
 cd a-wizard
@@ -64,7 +66,7 @@ Verify with `uv run a-wizard doctor` → `OK fluidaudio: ...`. Without FluidAudi
 
 Requirements: Python 3.13, `ffmpeg`, and `ffprobe`. Swift is recommended on Apple Silicon for building FluidAudio.
 
-Expected performance on M3 16 GB / M4 24 GB: mlx-whisper turbo at roughly 5–10× real time; FluidAudio diarization at hundreds of times real time (order of magnitude).
+Expected performance on M3 16 GB / M4 24 GB: mlx-whisper turbo at roughly 5–10× realtime; FluidAudio diarization at hundreds of times realtime (order of magnitude).
 
 ## Running from Any Directory
 
@@ -76,10 +78,6 @@ In `~/.zshrc` (or `~/.bashrc`):
 
 ```bash
 alias a-wizard='uv run --project ~/path/to/a-wizard a-wizard'
-```
-
-```bash
-alias a-wizard='uv run --project ~/prj/_poligon/a-wizard a-wizard'
 ```
 
 After `source ~/.zshrc`:
@@ -115,17 +113,19 @@ Set environment variables such as `HF_TOKEN` and `A_WIZARD_FLUIDAUDIO_BIN` separ
 uv run a-wizard doctor
 uv run a-wizard run /path/to/recording.mkv
 # new projects default to --processing-mode mixdown
+# first run asks for prompt, language, and track modes (unless --preset)
 
 uv run a-wizard run /path/to/recording.project --status-only
 uv run a-wizard plan /path/to/recording.project --json
 
-# re-enter language / prompt / track modes (does not run ASR)
+# re-enter language / prompt / track modes later (does not run ASR;
+# marks only dependent stages stale, then resume with run)
 uv run a-wizard configure /path/to/recording.project
 uv run a-wizard configure /path/to/recording.project \
   --language en --no-prompt --track 0:diarized --track 1:skipped
 uv run a-wizard run /path/to/recording.project
 
-# non-interactive
+# non-interactive first run
 uv run a-wizard run recording.mkv --preset obs-interview
 
 # explicit adapter selection
@@ -143,14 +143,16 @@ uv run a-wizard run recording.mkv --preset obs-interview --mock
 
 Primary output: `recording.project/dialog/dialog.minimize.txt`.
 
-In mixdown mode:
+In mixdown mode (`run` stage order):
 
 1. extract → per-track WAV
-2. configure: project prompt + language; track mode only (plain → `SPEAKER_T{n}`)
+2. first-run gates (during `run`): project prompt + language; track mode (`plain` → `SPEAKER_T{n}`, `diarized` → later `SPEAKER_T{n}D{k}`, `skipped` excluded from mix)
 3. mixdown → `tracks/mix.wav` (excluding `skipped` tracks)
 4. ASR (one pass with word timestamps)
-5. attribute: channel RMS energy; neural diarization → `SPEAKER_T{n}D{k}`
+5. attribute: channel RMS energy; neural diarization on diarized channels → `SPEAKER_T{n}D{k}`
 6. merge → minimize (timing summary at the end of the run)
+
+To change settings after a finished (or mid) project, use `a-wizard configure` (not `run`): language/prompt changes stale mix transcription and downstream stages; track-mode-only changes keep mix ASR when possible. Extracted WAVs are never invalidated by configure.
 
 ## Tests
 
@@ -160,4 +162,3 @@ uv run pytest
 ```
 
 Synthetic fixtures only—no real recordings or tokens. Real MLX/CoreML models are used only in opt-in `@pytest.mark.slow` tests.
-

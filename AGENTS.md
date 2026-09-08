@@ -5,7 +5,7 @@ This directory is a standalone `a-wizard` project organized with GitHub Spec Kit
 ## Getting Started
 
 1. Principles: `.specify/memory/constitution.md`
-2. Specifications: `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`
+2. Specifications: `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`
 3. Code: `src/a_wizard/`
 4. Quickstart: `README.md`
 
@@ -13,7 +13,7 @@ This directory is a standalone `a-wizard` project organized with GitHub Spec Kit
 
 Skills are installed in `.cursor/skills/` and `.claude/skills/` (`speckit-constitution`, `speckit-specify`, …).
 
-Active feature: `specs/002-mlx-mixdown-pipeline` (see `.specify/feature.json`).
+Active feature: `specs/003-configure-cli` (see `.specify/feature.json`).
 
 ## Rules
 
