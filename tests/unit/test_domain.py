@@ -7,6 +7,7 @@ import pytest
 from a_wizard.domain.dag import ActionKind, detect_next_action
 from a_wizard.domain.freshness import mark_stale_downstream, signature
 from a_wizard.domain.models import (
+    ProcessingMode,
     Project,
     Segment,
     StageStatus,
@@ -65,6 +66,44 @@ def test_invalidation_speakers():
     assert "merge" in keys
     assert "minimize" in keys
     assert p.stage("merge").status == StageStatus.STALE
+
+
+def test_asr_config_invalidates_mix_keeps_extract():
+    p = Project.new(
+        source_path="/v.mkv",
+        basename="v.mkv",
+        audio_stream_count=2,
+        processing_mode=ProcessingMode.MIXDOWN,
+    )
+    for key in ("extract", "mixdown", "transcribe:mix", "attribute", "merge", "minimize"):
+        p.stage(key).status = StageStatus.SUCCEEDED
+    keys = mark_stale_downstream(p, "asr_config")
+    assert "transcribe:mix" in keys
+    assert "attribute" in keys
+    assert "merge" in keys
+    assert "minimize" in keys
+    assert p.stage("extract").status == StageStatus.SUCCEEDED
+    assert p.stage("mixdown").status == StageStatus.SUCCEEDED
+
+
+def test_asr_config_invalidates_per_track_active_only():
+    p = Project.new(
+        source_path="/v.mkv",
+        basename="v.mkv",
+        audio_stream_count=2,
+        processing_mode=ProcessingMode.PER_TRACK,
+    )
+    p.tracks[0].mode = TrackMode.PLAIN
+    p.tracks[1].mode = TrackMode.SKIPPED
+    p.stage("transcribe:0").status = StageStatus.SUCCEEDED
+    p.stage("transcribe:1").status = StageStatus.SUCCEEDED
+    p.stage("merge").status = StageStatus.SUCCEEDED
+    p.stage("minimize").status = StageStatus.SUCCEEDED
+    keys = mark_stale_downstream(p, "asr_config")
+    assert "transcribe:0" in keys
+    assert "transcribe:1" not in keys
+    assert "merge" in keys
+    assert p.stage("transcribe:1").status == StageStatus.SUCCEEDED
 
 
 def test_project_roundtrip_dict():

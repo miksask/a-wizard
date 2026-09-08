@@ -317,6 +317,96 @@ class WizardService:
         if initial_prompt is not ...:
             track.initial_prompt = initial_prompt
 
+    def apply_configure(
+        self,
+        project: Project,
+        *,
+        language: str,
+        initial_prompt: str | None,
+        track_modes: dict[int, str],
+        skip_reasons: dict[int, str | None] | None = None,
+    ) -> dict[str, Any]:
+        """Apply project settings and invalidate only changed dependents.
+
+        Returns a summary: changed, language, prompt_set, tracks, invalidated.
+        Does not run any pipeline stage or persist the project.
+        """
+        if language not in ("ru", "en"):
+            raise UsageError(
+                f"language must be ru or en, got {language!r}",
+                code="bad_language",
+            )
+        if not project.tracks:
+            raise UsageError("Project has no tracks", code="no_tracks")
+
+        known = {t.index for t in project.tracks}
+        extra = set(track_modes) - known
+        if extra:
+            raise UsageError(
+                f"unknown track(s): {sorted(extra)}",
+                code="bad_track",
+            )
+        missing = sorted(known - set(track_modes))
+        if missing:
+            raise UsageError(
+                f"track mode required for: {missing}",
+                code="track_required",
+            )
+        allowed = {m.value for m in TrackMode if m != TrackMode.PENDING}
+        for idx, mode in track_modes.items():
+            if mode not in allowed:
+                raise UsageError(
+                    f"track {idx}: mode must be plain, diarized, or skipped",
+                    code="bad_mode",
+                )
+
+        skip_reasons = skip_reasons or {}
+        defaults = project.transcription_defaults or {}
+        old_lang = defaults.get("language", "ru")
+        old_prompt = defaults.get("initial_prompt")
+        if isinstance(old_prompt, str) and not old_prompt.strip():
+            old_prompt = None
+        if isinstance(initial_prompt, str):
+            initial_prompt = initial_prompt.strip() or None
+
+        asr_changed = old_lang != language or old_prompt != initial_prompt
+        mode_changes = [
+            t.index for t in project.tracks if t.mode.value != track_modes[t.index]
+        ]
+
+        project.transcription_defaults["language"] = language
+        project.transcription_defaults["initial_prompt"] = initial_prompt
+        project.transcription_defaults["initial_prompt_reviewed"] = True
+        for t in project.tracks:
+            t.language = language
+
+        invalidated: list[str] = []
+        if asr_changed:
+            invalidated.extend(mark_stale_downstream(project, "asr_config"))
+            if project.processing_mode == ProcessingMode.PER_TRACK:
+                for t in project.tracks:
+                    if (
+                        track_modes[t.index] in (TrackMode.PLAIN.value, TrackMode.DIARIZED.value)
+                        and t.status == TrackStatus.TRANSCRIBED
+                    ):
+                        t.status = TrackStatus.EXTRACTED
+
+        for idx in mode_changes:
+            self.set_track_mode(
+                project,
+                idx,
+                mode=track_modes[idx],
+                reason=skip_reasons.get(idx),
+            )
+
+        return {
+            "changed": asr_changed or bool(mode_changes),
+            "language": language,
+            "prompt_set": initial_prompt is not None,
+            "tracks": {idx: mode for idx, mode in sorted(track_modes.items())},
+            "invalidated": invalidated,
+        }
+
     def map_speakers(
         self,
         project: Project,

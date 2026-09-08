@@ -17,7 +17,7 @@ The project is organized with [GitHub Spec Kit](https://github.com/github/spec-k
 - Fallback ASR: faster-whisper (non-Apple platforms)
 - Merge → canonical `dialog.json` → `dialog.minimize.txt`
 - Atomic manifest, project lock, freshness/invalidation
-- Commands: `run`, `status`, `plan`, `init`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
+- Commands: `run`, `status`, `plan`, `init`, `configure`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
 
 ## Installation
 
@@ -44,7 +44,7 @@ The primary diarization backend. It is **not** available through Homebrew and mu
 ```bash
 # from the a-wizard root (external-libs/ is in .gitignore)
 mkdir -p external-libs && cd external-libs
-git clone https://github.com/FluidInference/FluidAudio.git
+git clone --depth=1 https://github.com/FluidInference/FluidAudio.git
 cd FluidAudio
 swift build -c release
 
@@ -118,6 +118,12 @@ uv run a-wizard run /path/to/recording.mkv
 
 uv run a-wizard run /path/to/recording.project --status-only
 uv run a-wizard plan /path/to/recording.project --json
+
+# re-enter language / prompt / track modes (does not run ASR)
+uv run a-wizard configure /path/to/recording.project
+uv run a-wizard configure /path/to/recording.project \
+  --language en --no-prompt --track 0:diarized --track 1:skipped
+uv run a-wizard run /path/to/recording.project
 
 # non-interactive
 uv run a-wizard run recording.mkv --preset obs-interview

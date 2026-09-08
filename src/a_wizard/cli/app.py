@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -14,7 +15,7 @@ from rich.table import Table
 
 from a_wizard.application.service import ServiceConfig, WizardService, resolve_target
 from a_wizard.domain.dag import ActionKind, NextAction
-from a_wizard.domain.errors import AppError, ExitCode
+from a_wizard.domain.errors import AppError, ExitCode, UsageError
 from a_wizard.domain.models import ProcessingMode, Project, TrackMode
 
 app = typer.Typer(
@@ -133,6 +134,134 @@ def _interactive_handler(svc: WizardService):
         return False
 
     return handle
+
+
+def _parse_track_flag(item: str) -> tuple[int, str, str | None]:
+    parts = item.split(":", 2)
+    if len(parts) < 2 or not parts[0].isdigit():
+        raise UsageError(
+            f"bad --track value: {item!r} (expected N:mode)",
+            code="bad_track",
+        )
+    idx = int(parts[0])
+    mode = parts[1].strip()
+    reason = parts[2].strip() or None if len(parts) == 3 else None
+    if mode not in ("plain", "diarized", "skipped"):
+        raise UsageError(
+            f"track {idx}: mode must be plain, diarized, or skipped",
+            code="bad_mode",
+        )
+    return idx, mode, reason
+
+
+def _collect_configure(
+    project: Project,
+    *,
+    language: str | None,
+    prompt: str | None,
+    no_prompt: bool,
+    track_flags: list[str],
+) -> tuple[str, str | None, dict[int, str], dict[int, str | None]]:
+    if prompt is not None and no_prompt:
+        raise UsageError("--prompt and --no-prompt are mutually exclusive", code="bad_prompt")
+
+    tty = sys.stdin.isatty()
+    defaults = project.transcription_defaults or {}
+    current_prompt = defaults.get("initial_prompt")
+    if isinstance(current_prompt, str) and not current_prompt.strip():
+        current_prompt = None
+
+    if no_prompt:
+        initial_prompt: str | None = None
+    elif prompt is not None:
+        initial_prompt = prompt
+    elif tty:
+        if isinstance(current_prompt, str) and current_prompt:
+            console.print(f"Current initial_prompt: {current_prompt}")
+        choice = _prompt_choice(
+            "Whisper initial_prompt for the project:",
+            [
+                "leave empty / unchanged",
+                "disable prompt",
+                "enter custom prompt",
+            ],
+            default=1,
+        )
+        if choice == 2:
+            initial_prompt = None
+        elif choice == 3:
+            text = input("initial_prompt text: ").strip()
+            initial_prompt = text or None
+        else:
+            initial_prompt = current_prompt if isinstance(current_prompt, str) else None
+    else:
+        raise UsageError(
+            "non-interactive configure requires --prompt or --no-prompt",
+            code="prompt_required",
+            next_step="pass --prompt TEXT or --no-prompt",
+        )
+
+    if language is not None:
+        if language not in ("ru", "en"):
+            raise UsageError("language must be ru or en", code="bad_language")
+        chosen_lang = language
+    elif tty:
+        current_lang = defaults.get("language", "ru")
+        lang_default = 1 if current_lang == "ru" else 2
+        lang_choice = _prompt_choice("Project language:", ["ru", "en"], default=lang_default)
+        chosen_lang = ("ru", "en")[lang_choice - 1]
+    else:
+        raise UsageError(
+            "non-interactive configure requires --language",
+            code="language_required",
+            next_step="pass --language ru|en",
+        )
+
+    parsed: dict[int, tuple[str, str | None]] = {}
+    for item in track_flags:
+        idx, mode, reason = _parse_track_flag(item)
+        parsed[idx] = (mode, reason)
+
+    track_modes: dict[int, str] = {}
+    skip_reasons: dict[int, str | None] = {}
+    for t in project.tracks:
+        if t.index in parsed:
+            track_modes[t.index] = parsed[t.index][0]
+            skip_reasons[t.index] = parsed[t.index][1]
+            continue
+        if not tty:
+            raise UsageError(
+                f"non-interactive configure requires --track {t.index}:mode",
+                code="track_required",
+                next_step="pass --track N:plain|diarized|skipped for every track",
+            )
+        console.print(f"\nTrack {t.index} (channel role in mixdown)")
+        if t.wav:
+            console.print(f"  WAV: {t.wav}")
+        mode_default = {
+            TrackMode.PLAIN: 1,
+            TrackMode.DIARIZED: 2,
+            TrackMode.SKIPPED: 3,
+        }.get(t.mode)
+        mode_choice = _prompt_choice(
+            "Channel mode:",
+            [
+                "plain — one speaker",
+                "diarized — multiple speakers on the channel",
+                "skipped — exclude from the mix",
+            ],
+            default=mode_default,
+        )
+        if mode_choice == 1:
+            track_modes[t.index] = "plain"
+        elif mode_choice == 2:
+            track_modes[t.index] = "diarized"
+        else:
+            reason = input("Skip reason (Enter for none): ").strip() or None
+            track_modes[t.index] = "skipped"
+            skip_reasons[t.index] = reason
+
+    return chosen_lang, initial_prompt, track_modes, skip_reasons
 
 
 @app.command()
@@ -260,6 +389,63 @@ def init_cmd(
             Path(video), force=force, processing_mode=ProcessingMode(processing_mode)
         )
         out.print(f"Created project: {path}")
+    except AppError as e:
+        raise typer.Exit(_handle_error(e)) from e
+
+
+@app.command("configure")
+def configure_cmd(
+    target: str = typer.Argument(..., help="Video file or .project directory"),
+    language: Optional[str] = typer.Option(None, "--language", help="ru|en"),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="Whisper initial_prompt"),
+    no_prompt: bool = typer.Option(False, "--no-prompt", help="Clear initial_prompt"),
+    track_flags: list[str] = typer.Option(
+        [],
+        "--track",
+        help="N:mode or N:mode:reason (repeatable). mode=plain|diarized|skipped",
+    ),
+) -> None:
+    """Re-enter project prompt, language, and track modes without running ASR."""
+    svc = _service(mock=True)
+    try:
+        project_dir, _, needs_init = resolve_target(target)
+        if needs_init or project_dir is None or not svc.repo.exists(project_dir):
+            raise UsageError(
+                "Project not initialized",
+                code="not_initialized",
+                next_step="a-wizard init VIDEO  or  a-wizard run VIDEO",
+            )
+        proj = svc.load(project_dir)
+        language_v, prompt_v, modes, reasons = _collect_configure(
+            proj,
+            language=language,
+            prompt=prompt,
+            no_prompt=no_prompt,
+            track_flags=track_flags,
+        )
+        svc.lock.acquire(project_dir)
+        try:
+            result = svc.apply_configure(
+                proj,
+                language=language_v,
+                initial_prompt=prompt_v,
+                track_modes=modes,
+                skip_reasons=reasons,
+            )
+            svc.repo.save(project_dir, proj)
+        finally:
+            svc.lock.release(project_dir)
+
+        out.print(f"Language: {result['language']}")
+        out.print(f"Prompt: {'set' if result['prompt_set'] else '(none)'}")
+        for idx, mode in result["tracks"].items():
+            extra = f" ({reasons.get(idx)})" if mode == "skipped" and reasons.get(idx) else ""
+            out.print(f"Track {idx}: {mode}{extra}")
+        if result["changed"]:
+            out.print("Settings saved; dependent stages marked stale.")
+        else:
+            out.print("No settings changed.")
+        out.print(f"Next: a-wizard run {project_dir}")
     except AppError as e:
         raise typer.Exit(_handle_error(e)) from e
 

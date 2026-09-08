@@ -209,3 +209,135 @@ def test_pipeline_emits_fixed_speaker_ids(tmp_path: Path, mock_svc: WizardServic
     assert project.tracks[0].plain_speaker == "SPEAKER_T0"
     timings = (project_dir / "manifest.yaml").read_text(encoding="utf-8")
     assert "started_at" in timings
+
+
+def test_configure_language_then_run_redoes_asr(tmp_path: Path, mock_svc: WizardService):
+    video = tmp_path / "reconf.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "reconf.project"
+    extract_digest = mock_svc.load(project_dir).stage("extract").output_digests
+    asr_before = (project_dir / "transcripts" / "mix.raw.json").read_bytes()
+
+    project = mock_svc.load(project_dir)
+    mock_svc.apply_configure(
+        project,
+        language="en",
+        initial_prompt=None,
+        track_modes={0: "plain", 1: "diarized"},
+    )
+    mock_svc.repo.save(project_dir, project)
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.STALE
+    assert project.stage("extract").status == StageStatus.SUCCEEDED
+    assert project.stage("extract").output_digests == extract_digest
+
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
+    assert project.stage("extract").output_digests == extract_digest
+    assert project.transcription_defaults["language"] == "en"
+    # mock ASR is deterministic; file is rewritten after stale transcribe
+    assert (project_dir / "transcripts" / "mix.raw.json").is_file()
+    _ = asr_before
+
+
+def test_configure_channel_role_keeps_mix_asr(tmp_path: Path, mock_svc: WizardService):
+    video = tmp_path / "roles.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "roles.project"
+    asr_digest = mock_svc.load(project_dir).stage("transcribe:mix").output_digests
+    raw_before = (project_dir / "transcripts" / "mix.raw.json").read_bytes()
+
+    project = mock_svc.load(project_dir)
+    mock_svc.apply_configure(
+        project,
+        language=project.transcription_defaults.get("language", "ru"),
+        initial_prompt=project.transcription_defaults.get("initial_prompt"),
+        track_modes={0: "diarized", 1: "diarized"},
+    )
+    mock_svc.repo.save(project_dir, project)
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
+    assert project.stage("transcribe:mix").output_digests == asr_digest
+    assert project.stage("attribute").status == StageStatus.STALE
+    assert (project_dir / "transcripts" / "mix.raw.json").read_bytes() == raw_before
+
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+    assert (project_dir / "transcripts" / "mix.raw.json").read_bytes() == raw_before
+
+
+def test_configure_noop_run_stays_done(tmp_path: Path, mock_svc: WizardService):
+    video = tmp_path / "noop.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "noop.project"
+    project = mock_svc.load(project_dir)
+    raw_before = (project_dir / "transcripts" / "mix.raw.json").read_bytes()
+    result = mock_svc.apply_configure(
+        project,
+        language=project.transcription_defaults.get("language", "ru"),
+        initial_prompt=project.transcription_defaults.get("initial_prompt"),
+        track_modes={t.index: t.mode.value for t in project.tracks},
+    )
+    mock_svc.repo.save(project_dir, project)
+    assert result["changed"] is False
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
+
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+    assert (project_dir / "transcripts" / "mix.raw.json").read_bytes() == raw_before
+
+
+def test_configure_cli_flags_and_missing_tracks(tmp_path: Path, mock_svc: WizardService):
+    from typer.testing import CliRunner
+
+    from a_wizard.cli.app import app
+
+    video = tmp_path / "cli.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "cli.project"
+    runner = CliRunner()
+
+    missing = runner.invoke(
+        app,
+        ["configure", str(project_dir), "--language", "en", "--no-prompt"],
+    )
+    assert missing.exit_code == ExitCode.USAGE
+
+    ok = runner.invoke(
+        app,
+        [
+            "configure",
+            str(project_dir),
+            "--language",
+            "en",
+            "--no-prompt",
+            "--track",
+            "0:plain",
+            "--track",
+            "1:skipped",
+        ],
+    )
+    assert ok.exit_code == 0, ok.output
+    project = mock_svc.load(project_dir)
+    assert project.transcription_defaults["language"] == "en"
+    assert project.tracks[1].mode.value == "skipped"

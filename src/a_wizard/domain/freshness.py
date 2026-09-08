@@ -213,6 +213,16 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
             pass
     elif changed == "glyphs":
         stale("minimize")
+    elif changed == "asr_config":
+        if project.processing_mode == ProcessingMode.MIXDOWN:
+            stale("transcribe:mix")
+            stale("attribute")
+        else:
+            for t in project.tracks:
+                if t.mode.value != "skipped":
+                    stale(f"transcribe:{t.index}")
+        stale("merge")
+        stale("minimize")
     elif changed == "merge":
         stale("merge")
         stale("minimize")

@@ -1,1 +1,3 @@
-{"feature_directory":"specs/002-mlx-mixdown-pipeline"}
+{
+  "feature_directory": "specs/003-configure-cli"
+}
