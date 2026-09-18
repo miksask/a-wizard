@@ -15,7 +15,7 @@ The project is organized with [GitHub Spec Kit](https://github.com/github/spec-k
 - Channel modes: `plain` / `diarized` / `skipped`
 - ASR-free diarization: FluidAudio (CoreML), sherpa-onnx, and experimental speakrs
 - Fallback ASR: faster-whisper (non-Apple platforms)
-- Merge → canonical `dialog.json` → `dialog.minimize.txt`
+- Merge → canonical `dialog.json` → `dialog.minimize.txt` (+ `transcript.txt` copy)
 - Atomic manifest, project lock, freshness/invalidation
 - Commands: `run`, `status`, `plan`, `init`, `configure`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
 
@@ -141,7 +141,7 @@ uv run a-wizard bench diar --input /path/to/track.wav --backends fluidaudio,sher
 uv run a-wizard run recording.mkv --preset obs-interview --mock
 ```
 
-Primary output: `recording.project/dialog/dialog.minimize.txt`.
+Primary output: `recording.project/dialog/dialog.minimize.txt` (same content also written as `dialog/transcript.txt`).
 
 In mixdown mode (`run` stage order):
 

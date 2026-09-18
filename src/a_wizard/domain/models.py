@@ -413,6 +413,7 @@ class Project:
             "minimize": {
                 "status": self.stage("minimize").status.value,
                 "dialog_minimize_txt": "dialog/dialog.minimize.txt",
+                "transcript_txt": "dialog/transcript.txt",
                 "speaker_glyphs": dict(self.speaker_glyphs),
             },
         }

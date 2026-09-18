@@ -66,6 +66,7 @@ Check ffmpeg, extras, token presence (without printing values), and schema.
   dialog/dialog.json
   dialog/dialog.txt
   dialog/dialog.minimize.txt
+  dialog/transcript.txt
   dialog/spk_*.txt
   logs/run-*.jsonl
 ```

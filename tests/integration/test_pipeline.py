@@ -94,6 +94,8 @@ def test_full_pipeline_mixdown_preset(tmp_path: Path, mock_svc: WizardService):
     assert (project_dir / "dialog" / "dialog.json").is_file()
     minimize = (project_dir / "dialog" / "dialog.minimize.txt").read_text(encoding="utf-8")
     assert ":" in minimize
+    transcript = (project_dir / "dialog" / "transcript.txt").read_text(encoding="utf-8")
+    assert transcript == minimize
 
     project = mock_svc.load(project_dir)
     assert project.processing_mode == ProcessingMode.MIXDOWN

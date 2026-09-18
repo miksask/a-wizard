@@ -207,7 +207,9 @@ class WizardService:
         lines.append("\n--- Next ---")
         lines.append(describe_action(action))
         if min_ok:
-            lines.append(f"\nMinimized dialog: {project_dir / 'dialog' / 'dialog.minimize.txt'}")
+            dialog_dir = project_dir / "dialog"
+            lines.append(f"\nMinimized dialog: {dialog_dir / 'dialog.minimize.txt'}")
+            lines.append(f"Transcript copy: {dialog_dir / 'transcript.txt'}")
         timings = format_stage_timings(project)
         if timings:
             lines.append("")
@@ -753,6 +755,7 @@ class WizardService:
             segs = [Segment.from_dict(x) for x in raw]
             text = minimize_segments(segs, project.speaker_glyphs)
             digest = self.store.write_text(project_dir, "dialog/dialog.minimize.txt", text)
+            self.store.write_text(project_dir, "dialog/transcript.txt", text)
             self._succeed_stage(project, "minimize", {"minimize": digest})
             self.repo.save(project_dir, project)
         except Exception as e:
