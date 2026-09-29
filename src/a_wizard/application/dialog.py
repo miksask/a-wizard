@@ -67,7 +67,12 @@ def default_speaker_glyph(speaker_id: str, index: int, used: set[str]) -> str:
         n += 1
 
 
-def minimize_segments(segs: list[Segment], glyphs: dict[str, str]) -> str:
+def minimize_segments(
+    segs: list[Segment],
+    glyphs: dict[str, str],
+    *,
+    include_start_ts: bool = False,
+) -> str:
     speakers_seen: list[str] = []
     for s in segs:
         if s.speaker not in speakers_seen:
@@ -86,18 +91,27 @@ def minimize_segments(segs: list[Segment], glyphs: dict[str, str]) -> str:
     lines = [f"{prefixes[spk]}: {spk}" for spk in speakers_seen]
     lines.append("")
 
+    def flush(speaker: str, texts: list[str], start_ms: int) -> None:
+        body = f"{prefixes[speaker]}: {' '.join(texts)}"
+        if include_start_ts:
+            lines.append(f"[{fmt_ts(start_ms)}] {body}")
+        else:
+            lines.append(body)
+
     current: str | None = None
     buf: list[str] = []
+    start_ms = 0
     for s in segs:
         if s.speaker == current:
             buf.append(s.text)
         else:
             if buf and current is not None:
-                lines.append(f"{prefixes[current]}: {' '.join(buf)}")
+                flush(current, buf, start_ms)
             current = s.speaker
             buf = [s.text]
+            start_ms = s.start_ms
     if buf and current is not None:
-        lines.append(f"{prefixes[current]}: {' '.join(buf)}")
+        flush(current, buf, start_ms)
     return "\n".join(lines).rstrip() + "\n"
 
 

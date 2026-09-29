@@ -96,6 +96,13 @@ def test_full_pipeline_mixdown_preset(tmp_path: Path, mock_svc: WizardService):
     assert ":" in minimize
     transcript = (project_dir / "dialog" / "transcript.txt").read_text(encoding="utf-8")
     assert transcript == minimize
+    timed = (project_dir / "dialog" / "dialog.minimize.ts.txt").read_text(encoding="utf-8")
+    assert timed.split("\n\n", 1)[0] == minimize.split("\n\n", 1)[0]
+    timed_body = [ln for ln in timed.split("\n\n", 1)[-1].splitlines() if ln]
+    plain_body = [ln for ln in minimize.split("\n\n", 1)[-1].splitlines() if ln]
+    stripped = [ln.split("] ", 1)[1] for ln in timed_body]
+    assert stripped == plain_body
+    assert all(ln.startswith("[") and "–" not in ln.split("] ", 1)[0] for ln in timed_body)
 
     project = mock_svc.load(project_dir)
     assert project.processing_mode == ProcessingMode.MIXDOWN

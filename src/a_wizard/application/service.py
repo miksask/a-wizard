@@ -208,7 +208,8 @@ class WizardService:
         lines.append(describe_action(action))
         if min_ok:
             dialog_dir = project_dir / "dialog"
-            lines.append(f"\nMinimized dialog: {dialog_dir / 'dialog.minimize.txt'}")
+            lines.append(f"\nTimed minimize: {dialog_dir / 'dialog.minimize.ts.txt'}")
+            lines.append(f"Minimized dialog: {dialog_dir / 'dialog.minimize.txt'}")
             lines.append(f"Transcript copy: {dialog_dir / 'transcript.txt'}")
         timings = format_stage_timings(project)
         if timings:
@@ -753,7 +754,11 @@ class WizardService:
         try:
             raw = json.loads(self.store.read_text(project_dir, "dialog/dialog.json"))
             segs = [Segment.from_dict(x) for x in raw]
+            text_ts = minimize_segments(
+                segs, project.speaker_glyphs, include_start_ts=True
+            )
             text = minimize_segments(segs, project.speaker_glyphs)
+            self.store.write_text(project_dir, "dialog/dialog.minimize.ts.txt", text_ts)
             digest = self.store.write_text(project_dir, "dialog/dialog.minimize.txt", text)
             self.store.write_text(project_dir, "dialog/transcript.txt", text)
             self._succeed_stage(project, "minimize", {"minimize": digest})
