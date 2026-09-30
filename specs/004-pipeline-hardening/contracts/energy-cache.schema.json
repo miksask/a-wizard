@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a-wizard.local/schemas/energy-cache.schema.json",
+  "title": "EnergyCacheSidecar",
+  "type": "object",
+  "required": ["wav_sha256", "window_ms", "algorithm_version"],
+  "additionalProperties": false,
+  "properties": {
+    "wav_sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "window_ms": { "type": "integer", "minimum": 1 },
+    "algorithm_version": { "type": "string", "minLength": 1 }
+  }
+}

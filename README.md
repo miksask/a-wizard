@@ -6,7 +6,7 @@ Local, resume-safe multitrack ASR — fast on Apple Silicon (mlx-whisper turbo ~
   <img src="A-WIZARD.png" alt="UnGPT icon"/>
 </p>
 
-The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, and `specs/003-configure-cli/`.
+The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, and `specs/004-pipeline-hardening/`.
 
 ## Features
 
@@ -159,6 +159,13 @@ To change settings after a finished (or mid) project, use `a-wizard configure` (
 ```bash
 uv sync --extra dev
 uv run pytest
+./scripts/quality-gate.sh   # ruff + pytest coverage + build + hygiene
+```
+
+Optional local git hooks (one-time per clone):
+
+```bash
+git config core.hooksPath hooks
 ```
 
 Synthetic fixtures only—no real recordings or tokens. Real MLX/CoreML models are used only in opt-in `@pytest.mark.slow` tests.

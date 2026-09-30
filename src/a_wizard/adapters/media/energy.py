@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import wave
+from pathlib import Path
 
 from a_wizard.domain.errors import AppError
 

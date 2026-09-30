@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import uuid4
-
 
 SCHEMA_VERSION = 2
 DEFAULT_GLYPHS = {"__EMPLOYEE__": "Δ", "__MANAGER__": "Ψ"}
@@ -22,7 +21,7 @@ _LEGACY_SCOPED_RE = re.compile(r"^T(\d+)/SPEAKER_(\d+)$")
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 class ProcessingMode(str, Enum):

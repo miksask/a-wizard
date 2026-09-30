@@ -24,7 +24,7 @@ def _make_multitrack_mkv(path: Path, tracks: int = 2, seconds: float = 1.0) -> N
     inputs = []
     maps = []
     for i in range(tracks):
-        inputs += ["-f", "lavfi", "-i", f"anullsrc=r=16000:cl=mono"]
+        inputs += ["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono"]
         maps += ["-map", f"{i}:a"]
     cmd = [
         "ffmpeg",
@@ -350,3 +350,21 @@ def test_configure_cli_flags_and_missing_tracks(tmp_path: Path, mock_svc: Wizard
     project = mock_svc.load(project_dir)
     assert project.transcription_defaults["language"] == "en"
     assert project.tracks[1].mode.value == "skipped"
+
+
+def test_missing_mix_raw_triggers_retranscribe(tmp_path: Path, mock_svc: WizardService):
+    video = tmp_path / "fresh.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "fresh.project"
+    extract_digest = mock_svc.load(project_dir).stage("extract").output_digests
+    (project_dir / "transcripts" / "mix.raw.json").unlink()
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
+    assert project.stage("extract").output_digests == extract_digest
+    assert (project_dir / "transcripts" / "mix.raw.json").is_file()

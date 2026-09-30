@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from a_wizard.domain.dag import ActionKind, detect_next_action
@@ -56,6 +58,16 @@ def test_detect_next_action_flow():
 
 def test_signature_stable():
     assert signature({"a": 1, "b": 2}) == signature({"b": 2, "a": 1})
+
+
+def test_content_fingerprint_small_file(tmp_path: Path):
+    from a_wizard.domain.freshness import content_fingerprint
+
+    p = tmp_path / "x.bin"
+    p.write_bytes(b"abc")
+    fp = content_fingerprint(p)
+    assert fp.startswith("sha256:")
+    assert content_fingerprint(p) == fp
 
 
 def test_invalidation_speakers():

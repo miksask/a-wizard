@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from a_wizard.domain.errors import AppError, UsageError
+from a_wizard.domain.freshness import content_fingerprint
 
 
 class FfmpegMediaAdapter:
@@ -74,7 +75,7 @@ class FfmpegMediaAdapter:
             "duration_ms": duration_ms,
             "audio_stream_count": len(streams),
             "audio_streams": streams,
-            "content_fingerprint": f"{video.stat().st_size}:{int(video.stat().st_mtime)}",
+            "content_fingerprint": content_fingerprint(video),
         }
 
     def extract_all(self, video: Path, project_dir: Path, *, force: bool = False) -> list[Path]:

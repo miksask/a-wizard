@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import os
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from a_wizard.adapters.asr.engines import resolve_asr_adapter
@@ -34,6 +35,7 @@ from a_wizard.application.dialog import (
     safe_filename,
     segs_to_txt,
 )
+from a_wizard.application.reconciliation import apply_adapter_identity, reconcile_project
 from a_wizard.domain.dag import ActionKind, NextAction, describe_action, detect_next_action
 from a_wizard.domain.errors import AppError, BlockedError, ExitCode, UsageError
 from a_wizard.domain.freshness import (
@@ -95,6 +97,7 @@ class ServiceConfig:
     media_adapter: str = "ffmpeg"
     use_mock_engines: bool = False
     processing_mode: ProcessingMode = ProcessingMode.MIXDOWN
+    metadata_only: bool = False
 
 
 class WizardService:
@@ -111,19 +114,74 @@ class WizardService:
         self.store = FsArtifactStore()
         self.lock = FileProjectLock()
         self.media = media or FfmpegMediaAdapter()
-        if asr is not None:
-            self.asr = asr
-        elif self.config.use_mock_engines or self.config.asr_adapter in ("mock", "mock-asr"):
-            self.asr = resolve_asr_adapter("mock-asr")
-        else:
-            self.asr = resolve_asr_adapter(self.config.asr_adapter)
-        if diar is not None:
-            self.diar = diar
-        elif self.config.use_mock_engines or self.config.diar_adapter in ("mock", "mock-diar"):
-            self.diar = resolve_diar_adapter("mock-diar")
-        else:
-            self.diar = resolve_diar_adapter(self.config.diar_adapter)
+        self._asr = asr
+        self._diar = diar
+        self._asr_resolved = asr is not None
+        self._diar_resolved = diar is not None
+        if not self.config.metadata_only:
+            _ = self.asr
+            _ = self.diar
         self._interrupted = False
+
+    @property
+    def asr(self) -> Any:
+        if not self._asr_resolved:
+            if self.config.use_mock_engines or self.config.asr_adapter in ("mock", "mock-asr"):
+                self._asr = resolve_asr_adapter("mock-asr")
+            else:
+                self._asr = resolve_asr_adapter(self.config.asr_adapter)
+            self._asr_resolved = True
+        return self._asr
+
+    @asr.setter
+    def asr(self, value: Any) -> None:
+        self._asr = value
+        self._asr_resolved = True
+
+    @property
+    def diar(self) -> Any:
+        if not self._diar_resolved:
+            if self.config.use_mock_engines or self.config.diar_adapter in ("mock", "mock-diar"):
+                self._diar = resolve_diar_adapter("mock-diar")
+            else:
+                self._diar = resolve_diar_adapter(self.config.diar_adapter)
+            self._diar_resolved = True
+        return self._diar
+
+    @diar.setter
+    def diar(self, value: Any) -> None:
+        self._diar = value
+        self._diar_resolved = True
+
+    def _require_processing(self) -> None:
+        if self.config.metadata_only and not (self._asr_resolved and self._diar_resolved):
+            # Allow if adapters were injected; otherwise resolve now for stage runners.
+            _ = self.asr
+            _ = self.diar
+
+    def reconcile(self, project_dir: Path, project: Project, *, persist: bool = True) -> list[str]:
+        """Reconcile freshness; optionally persist when changed. Returns invalidated keys."""
+        adapter_invalidated: list[str] = []
+        if not self.config.metadata_only:
+            adapter_invalidated = apply_adapter_identity(
+                project,
+                asr_id=getattr(self.asr, "adapter_id", None),
+                diar_id=getattr(self.diar, "adapter_id", None),
+                media_id=getattr(self.media, "adapter_id", None),
+            )
+        result = reconcile_project(
+            project_dir, project, self.store, refresh_fingerprint=True
+        )
+        changed = result.changed or bool(adapter_invalidated)
+        if persist and changed:
+            self.repo.save(project_dir, project)
+        seen: set[str] = set()
+        out: list[str] = []
+        for key in [*adapter_invalidated, *result.invalidated]:
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+        return out
 
     def _setup_sigint(self, on_interrupt: Callable[[], None] | None = None) -> None:
         def handler(signum: int, frame: object) -> None:
@@ -135,6 +193,11 @@ class WizardService:
         signal.signal(signal.SIGINT, handler)
 
     def _hf_ok(self) -> bool:
+        if self.config.metadata_only and not self._diar_resolved:
+            key = (self.config.diar_adapter or "auto").lower()
+            if key in ("pyannote-community-1", "pyannote"):
+                return hf_token_available()
+            return True
         if getattr(self.diar, "adapter_id", "") == "mock-diar":
             return True
         if getattr(self.diar, "adapter_id", "") != "pyannote-community-1":
@@ -466,10 +529,11 @@ class WizardService:
         try:
             paths = self.media.extract_all(video, project_dir, force=force)
             digests = {}
-            for i, p in enumerate(paths):
-                digests[f"track_{i}"] = self.store.digest(project_dir, f"tracks/track_{i}.wav")
+            for i, _p in enumerate(paths):
+                rel = f"tracks/track_{i}.wav"
+                digests[rel] = self.store.digest(project_dir, rel)
                 t = project.get_track(i)
-                t.wav = f"tracks/track_{i}.wav"
+                t.wav = rel
                 if t.status == TrackStatus.PENDING:
                     t.status = TrackStatus.EXTRACTED
             self._succeed_stage(project, "extract", digests)
@@ -502,9 +566,9 @@ class WizardService:
         self.repo.save(project_dir, project)
         try:
             out = project_dir / project.mix.wav
-            self.media.mixdown(wavs, out, force=force or True)
+            self.media.mixdown(wavs, out, force=force)
             digest = self.store.digest(project_dir, project.mix.wav)
-            self._succeed_stage(project, "mixdown", {"mix": digest})
+            self._succeed_stage(project, "mixdown", {project.mix.wav: digest})
             mark_stale_downstream(project, "transcribe:mix")
             self.repo.save(project_dir, project)
         except Exception as e:
@@ -537,7 +601,7 @@ class WizardService:
                 "words": [w.to_dict() for w in result.words],
             }
             d1 = self.store.write_json(project_dir, "transcripts/mix.raw.json", payload)
-            self._succeed_stage(project, key, {"raw": d1})
+            self._succeed_stage(project, key, {"transcripts/mix.raw.json": d1})
             mark_stale_downstream(project, "attribute")
             self.repo.save(project_dir, project)
         except Exception as e:
@@ -593,7 +657,15 @@ class WizardService:
                 if t.mode in (TrackMode.PLAIN, TrackMode.DIARIZED):
                     t.status = TrackStatus.TRANSCRIBED
             mark_stale_downstream(project, "merge")
-            self._succeed_stage(project, key, {"segments": d1, "txt": d2, "report": d3})
+            self._succeed_stage(
+                project,
+                key,
+                {
+                    project.mix.segments: d1,
+                    project.mix.transcript_txt: d2,
+                    project.mix.attribution: d3,
+                },
+            )
             self.repo.save(project_dir, project)
         except Exception as e:
             self._fail_stage(project, key, e)
@@ -677,14 +749,20 @@ class WizardService:
             d2 = self.store.write_text(project_dir, track.transcript_txt, segs_to_txt(segs))
             track.status = TrackStatus.TRANSCRIBED
             mark_stale_downstream(project, "merge")
-            self._succeed_stage(project, key, {"segments": d1, "txt": d2})
+            self._succeed_stage(
+                project,
+                key,
+                {track.segments: d1, track.transcript_txt: d2},
+            )
             self.repo.save(project_dir, project)
         except Exception as e:
             self._fail_stage(project, key, e)
             self.repo.save(project_dir, project)
             raise
 
-    def run_merge(self, project_dir: Path, project: Project, *, allow_raw_speakers: bool = False) -> None:
+    def run_merge(
+        self, project_dir: Path, project: Project, *, allow_raw_speakers: bool = False
+    ) -> None:
         if project.processing_mode == ProcessingMode.MIXDOWN:
             if project.stage("attribute").status != StageStatus.SUCCEEDED:
                 raise UsageError("Attribute not done", code="attribute_required")
@@ -737,7 +815,11 @@ class WizardService:
                     f"dialog/spk_{safe_filename(spk)}.txt",
                     segs_to_txt(spk_segs),
                 )
-            self._succeed_stage(project, "merge", {"dialog_json": d_json, "dialog_txt": d_txt})
+            self._succeed_stage(
+                project,
+                "merge",
+                {"dialog/dialog.json": d_json, "dialog/dialog.txt": d_txt},
+            )
             project.stage("minimize").status = StageStatus.STALE
             self.repo.save(project_dir, project)
         except Exception as e:
@@ -761,7 +843,18 @@ class WizardService:
             self.store.write_text(project_dir, "dialog/dialog.minimize.ts.txt", text_ts)
             digest = self.store.write_text(project_dir, "dialog/dialog.minimize.txt", text)
             self.store.write_text(project_dir, "dialog/transcript.txt", text)
-            self._succeed_stage(project, "minimize", {"minimize": digest})
+            # Also digest the other required minimize outputs for verification.
+            d_ts = self.store.digest(project_dir, "dialog/dialog.minimize.ts.txt")
+            d_copy = self.store.digest(project_dir, "dialog/transcript.txt")
+            self._succeed_stage(
+                project,
+                "minimize",
+                {
+                    "dialog/dialog.minimize.txt": digest,
+                    "dialog/dialog.minimize.ts.txt": d_ts,
+                    "dialog/transcript.txt": d_copy,
+                },
+            )
             self.repo.save(project_dir, project)
         except Exception as e:
             self._fail_stage(project, "minimize", e)
@@ -846,6 +939,8 @@ class WizardService:
                 observer = JsonlRunObserver(project_dir)
                 observer.event("init", video=str(video))
 
+            project = self.repo.load(project_dir)
+            self.reconcile(project_dir, project, persist=True)
             project = self.repo.load(project_dir)
             out(self.status_text(project_dir, project))
             if status_only:

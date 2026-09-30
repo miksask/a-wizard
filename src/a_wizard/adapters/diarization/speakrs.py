@@ -79,6 +79,9 @@ def parse_rttm(text: str) -> list[SpeakerTurn]:
         dur = float(parts[4])
         speaker = parts[7]
         if not speaker.startswith("SPEAKER_"):
-            speaker = f"SPEAKER_{speaker}" if not speaker.isdigit() else f"SPEAKER_{int(speaker):02d}"
+            if speaker.isdigit():
+                speaker = f"SPEAKER_{int(speaker):02d}"
+            else:
+                speaker = f"SPEAKER_{speaker}"
         turns.append(SpeakerTurn.from_seconds(start, start + dur, speaker))
     return turns

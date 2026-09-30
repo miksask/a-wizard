@@ -1,4 +1,4 @@
-from a_wizard.domain.dag import ActionKind, NextAction, detect_next_action, describe_action
+from a_wizard.domain.dag import ActionKind, NextAction, describe_action, detect_next_action
 from a_wizard.domain.errors import AppError, BlockedError, ExitCode, StateError, UsageError
 from a_wizard.domain.models import (
     SCHEMA_VERSION,

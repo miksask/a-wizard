@@ -1,16 +1,18 @@
-"""Freshness signatures and digests."""
+"""Freshness signatures, digests, and stage contracts."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from a_wizard.domain.models import ProcessingMode, Project, StageStatus, Track
 
-
 ALGORITHM_VERSION = "a-wizard-2"
+ENERGY_ALGORITHM_VERSION = "a-wizard-2-energy-v1"
 
 
 def sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
@@ -26,6 +28,24 @@ def sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def content_fingerprint(path: Path, *, full_limit: int = 64 * 1024 * 1024) -> str:
+    """Stable content identity: full SHA-256 when small; else sampled hash."""
+    path = path.resolve()
+    st = path.stat()
+    size = int(st.st_size)
+    if size <= full_limit:
+        return f"sha256:{sha256_file(path)}"
+    head = 1024 * 1024
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        h.update(f.read(head))
+        if size > head:
+            f.seek(max(0, size - head))
+            h.update(f.read(head))
+    mtime_ns = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
+    return f"sampled:{size}:{mtime_ns}:{h.hexdigest()}"
 
 
 def canonical_json(data: Any) -> str:
@@ -155,6 +175,144 @@ def minimize_signature(project: Project) -> str:
     )
 
 
+@dataclass(frozen=True)
+class StageContract:
+    key: str
+    signature_fn: Callable[[Project], str]
+    required_outputs: tuple[str, ...]
+    digest_aliases: dict[str, str]
+
+
+def _extract_outputs(project: Project) -> tuple[str, ...]:
+    n = int(project.source.get("audio_stream_count") or len(project.tracks) or 0)
+    return tuple(f"tracks/track_{i}.wav" for i in range(n))
+
+
+def _extract_aliases(project: Project) -> dict[str, str]:
+    n = int(project.source.get("audio_stream_count") or len(project.tracks) or 0)
+    return {f"track_{i}": f"tracks/track_{i}.wav" for i in range(n)}
+
+
+def _mixdown_contract(project: Project) -> StageContract:
+    return StageContract(
+        key="mixdown",
+        signature_fn=mixdown_signature,
+        required_outputs=(project.mix.wav,),
+        digest_aliases={"mix": project.mix.wav},
+    )
+
+
+def _mix_transcribe_contract(project: Project) -> StageContract:
+    raw = "transcripts/mix.raw.json"
+    return StageContract(
+        key="transcribe:mix",
+        signature_fn=mix_transcribe_signature,
+        required_outputs=(raw,),
+        digest_aliases={"raw": raw},
+    )
+
+
+def _attribute_contract(project: Project) -> StageContract:
+    return StageContract(
+        key="attribute",
+        signature_fn=attribute_signature,
+        required_outputs=(
+            project.mix.segments,
+            project.mix.transcript_txt,
+            project.mix.attribution,
+        ),
+        digest_aliases={
+            "segments": project.mix.segments,
+            "txt": project.mix.transcript_txt,
+            "report": project.mix.attribution,
+        },
+    )
+
+
+def _merge_contract(project: Project) -> StageContract:
+    return StageContract(
+        key="merge",
+        signature_fn=merge_signature,
+        required_outputs=("dialog/dialog.json", "dialog/dialog.txt"),
+        digest_aliases={
+            "dialog_json": "dialog/dialog.json",
+            "dialog_txt": "dialog/dialog.txt",
+        },
+    )
+
+
+def _minimize_contract(project: Project) -> StageContract:
+    return StageContract(
+        key="minimize",
+        signature_fn=minimize_signature,
+        required_outputs=(
+            "dialog/dialog.minimize.ts.txt",
+            "dialog/dialog.minimize.txt",
+            "dialog/transcript.txt",
+        ),
+        digest_aliases={"minimize": "dialog/dialog.minimize.txt"},
+    )
+
+
+def _transcribe_track_contract(project: Project, track: Track) -> StageContract:
+    return StageContract(
+        key=f"transcribe:{track.index}",
+        signature_fn=lambda p, t=track: transcribe_signature(p, t),
+        required_outputs=(track.segments, track.transcript_txt),
+        digest_aliases={
+            "segments": track.segments,
+            "txt": track.transcript_txt,
+        },
+    )
+
+
+def stage_contracts(project: Project) -> list[StageContract]:
+    """Ordered contracts for stages that can be succeeded and verified."""
+    contracts: list[StageContract] = [
+        StageContract(
+            key="extract",
+            signature_fn=extract_signature,
+            required_outputs=_extract_outputs(project),
+            digest_aliases=_extract_aliases(project),
+        )
+    ]
+    if project.processing_mode == ProcessingMode.MIXDOWN:
+        contracts.extend(
+            [
+                _mixdown_contract(project),
+                _mix_transcribe_contract(project),
+                _attribute_contract(project),
+            ]
+        )
+    else:
+        for t in project.tracks:
+            if t.mode.value == "skipped":
+                continue
+            contracts.append(_transcribe_track_contract(project, t))
+    contracts.extend([_merge_contract(project), _minimize_contract(project)])
+    return contracts
+
+
+def resolve_digest_map(contract: StageContract, digests: dict[str, str]) -> dict[str, str]:
+    """Map recorded digests to relative artifact paths."""
+    out: dict[str, str] = {}
+    for key, digest in (digests or {}).items():
+        if key in contract.required_outputs:
+            out[key] = digest
+        elif key in contract.digest_aliases:
+            out[contract.digest_aliases[key]] = digest
+        else:
+            # Unknown key: keep as-is if it looks like a path
+            if "/" in key or key.endswith((".wav", ".json", ".txt", ".npy")):
+                out[key] = digest
+    return out
+
+
+def path_digest_dict(paths_to_digests: dict[str, str]) -> dict[str, str]:
+    """Normalize writer output to path-keyed digests."""
+    return dict(paths_to_digests)
+
+
 def mark_stale_downstream(project: Project, changed: str) -> list[str]:
     """Mark dependent stages stale. Returns list of invalidated keys."""
     invalidated: list[str] = []
@@ -186,7 +344,6 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
         stale("merge")
         stale("minimize")
     elif changed in ("channel_roles", "attribute"):
-        # Role changes invalidate attribution but keep mix ASR.
         stale("attribute")
         stale("merge")
         stale("minimize")
@@ -199,7 +356,6 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
     elif changed.startswith("track:"):
         idx = int(changed.split(":")[1])
         if project.processing_mode == ProcessingMode.MIXDOWN:
-            # Channel role change keeps mix ASR; re-attribute only.
             stale("attribute")
         else:
             stale(f"transcribe:{idx}")
@@ -209,7 +365,6 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
         stale("merge")
         stale("minimize")
         if project.processing_mode == ProcessingMode.MIXDOWN:
-            # Reviewed map applied at merge; attribute output stays.
             pass
     elif changed == "glyphs":
         stale("minimize")
@@ -223,7 +378,54 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
                     stale(f"transcribe:{t.index}")
         stale("merge")
         stale("minimize")
+    elif changed == "asr_adapter":
+        if project.processing_mode == ProcessingMode.MIXDOWN:
+            stale("transcribe:mix")
+            stale("attribute")
+        else:
+            for t in project.tracks:
+                if t.mode.value != "skipped":
+                    stale(f"transcribe:{t.index}")
+        stale("merge")
+        stale("minimize")
+    elif changed == "diar_adapter":
+        if project.processing_mode == ProcessingMode.MIXDOWN:
+            stale("attribute")
+        else:
+            for t in project.tracks:
+                if t.mode.value == "diarized":
+                    stale(f"transcribe:{t.index}")
+        stale("merge")
+        stale("minimize")
     elif changed == "merge":
         stale("merge")
         stale("minimize")
+    elif changed == "minimize":
+        stale("minimize")
+    elif changed.startswith("transcribe:"):
+        # per-track transcription stage key
+        stale(changed)
+        stale("merge")
+        stale("minimize")
     return invalidated
+
+
+def invalidate_from_stage(project: Project, stage_key: str) -> list[str]:
+    """Mark ``stage_key`` and dependents stale using the change-key graph."""
+    if stage_key.startswith("transcribe:") and stage_key != "transcribe:mix":
+        return mark_stale_downstream(project, stage_key)
+    if stage_key in (
+        "extract",
+        "mixdown",
+        "transcribe:mix",
+        "attribute",
+        "merge",
+        "minimize",
+        "asr_config",
+        "asr_adapter",
+        "diar_adapter",
+        "skipped_set",
+        "source",
+    ):
+        return mark_stale_downstream(project, stage_key)
+    return mark_stale_downstream(project, stage_key)

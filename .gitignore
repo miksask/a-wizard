@@ -13,5 +13,8 @@ build/
 *.mkv
 *.mp4
 *.mov
+# Ignore records whether directory or symlink
+records
 records/
+/records
 external-libs/

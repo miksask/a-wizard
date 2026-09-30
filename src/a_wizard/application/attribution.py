@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from a_wizard.adapters.media.energy import NumpyChannelEnergyProfiler, mean_energy
+from a_wizard.domain.freshness import ENERGY_ALGORITHM_VERSION, sha256_file
 from a_wizard.domain.models import (
     Segment,
     SpeakerTurn,
@@ -155,6 +159,53 @@ def _join_words(parts: list[str]) -> str:
     return " ".join(out)
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _read_energy_meta(meta_path: Path) -> dict[str, Any] | None:
+    if not meta_path.is_file():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not data.get("wav_sha256") or not data.get("window_ms") or not data.get("algorithm_version"):
+        return None
+    return data
+
+
+def _cache_valid(
+    meta: dict[str, Any] | None,
+    *,
+    wav_sha: str,
+    window_ms: int,
+) -> bool:
+    if not meta:
+        return False
+    return (
+        meta.get("wav_sha256") == wav_sha
+        and int(meta.get("window_ms") or 0) == window_ms
+        and meta.get("algorithm_version") == ENERGY_ALGORITHM_VERSION
+    )
+
+
 def load_or_compute_profiles(
     project_dir: Path,
     tracks: list[Track],
@@ -171,13 +222,44 @@ def load_or_compute_profiles(
     for t in tracks:
         if t.mode not in (TrackMode.PLAIN, TrackMode.DIARIZED):
             continue
-        cache = energy_dir / f"track_{t.index}.npy"
-        if cache.is_file():
-            profiles[t.index] = np.load(cache)
-            continue
         wav = project_dir / t.wav
+        cache = energy_dir / f"track_{t.index}.npy"
+        meta_path = energy_dir / f"track_{t.index}.json"
+        wav_sha = sha256_file(wav) if wav.is_file() else ""
+        meta = _read_energy_meta(meta_path)
+        if cache.is_file() and _cache_valid(meta, wav_sha=wav_sha, window_ms=window_ms):
+            try:
+                profiles[t.index] = np.load(cache)
+                continue
+            except Exception:
+                pass
         profile = profiler.profile(wav, window_ms=window_ms)
-        np.save(cache, profile)
+        # Atomic write npy via tempfile
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".track_{t.index}.",
+            suffix=".npy",
+            dir=str(energy_dir),
+        )
+        os.close(fd)
+        tmp = Path(tmp_name)
+        try:
+            np.save(tmp, profile)
+            os.replace(tmp, cache)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        sidecar = {
+            "wav_sha256": wav_sha or sha256_file(wav),
+            "window_ms": window_ms,
+            "algorithm_version": ENERGY_ALGORITHM_VERSION,
+        }
+        _atomic_write_bytes(
+            meta_path,
+            (json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
         profiles[t.index] = profile
     return profiles
 

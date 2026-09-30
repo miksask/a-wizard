@@ -7,7 +7,6 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -36,6 +35,7 @@ def _service(
     asr_adapter: str = "auto",
     diar_adapter: str = "auto",
     processing_mode: str = "mixdown",
+    metadata_only: bool = False,
 ) -> WizardService:
     mode = ProcessingMode(processing_mode)
     return WizardService(
@@ -44,6 +44,7 @@ def _service(
             asr_adapter="mock-asr" if mock else asr_adapter,
             diar_adapter="mock-diar" if mock else diar_adapter,
             processing_mode=mode,
+            metadata_only=metadata_only and not mock,
         )
     )
 
@@ -269,7 +270,7 @@ def run(
     target: str = typer.Argument(..., help="Video file or .project directory"),
     status_only: bool = typer.Option(False, "--status-only", help="Show status and exit"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview next step only"),
-    preset: Optional[str] = typer.Option(None, "--preset", help="Non-interactive preset"),
+    preset: str | None = typer.Option(None, "--preset", help="Non-interactive preset"),
     allow_raw_speakers: bool = typer.Option(
         False, "--allow-raw-speakers", help="Allow merge with unreviewed SPEAKER labels"
     ),
@@ -332,13 +333,19 @@ def status_cmd(
     mock: bool = typer.Option(False, "--mock", hidden=True),
 ) -> None:
     """Show project checklist."""
-    svc = _service(mock=mock)
+    svc = _service(mock=mock, metadata_only=True)
     try:
         project_dir, _, needs_init = resolve_target(target)
         if needs_init or project_dir is None or not svc.repo.exists(project_dir):
             out.print("Project not initialized yet.")
             raise typer.Exit(0)
         project = svc.load(project_dir)
+        svc.lock.acquire(project_dir)
+        try:
+            svc.reconcile(project_dir, project, persist=True)
+            project = svc.load(project_dir)
+        finally:
+            svc.lock.release(project_dir)
         if json_out:
             out.print(json.dumps(svc.plan_dict(project), ensure_ascii=False, indent=2))
         else:
@@ -353,12 +360,22 @@ def plan_cmd(
     json_out: bool = typer.Option(True, "--json/--no-json"),
 ) -> None:
     """Show stage DAG plan."""
-    svc = _service()
+    svc = _service(metadata_only=True)
     try:
         project_dir, _, needs_init = resolve_target(target)
         if needs_init or project_dir is None or not svc.repo.exists(project_dir):
-            raise AppError("Project not initialized", code="not_initialized", exit_code=ExitCode.USAGE)
+            raise AppError(
+                "Project not initialized",
+                code="not_initialized",
+                exit_code=ExitCode.USAGE,
+            )
         project = svc.load(project_dir)
+        svc.lock.acquire(project_dir)
+        try:
+            svc.reconcile(project_dir, project, persist=True)
+            project = svc.load(project_dir)
+        finally:
+            svc.lock.release(project_dir)
         data = svc.plan_dict(project)
         if json_out:
             out.print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -396,8 +413,8 @@ def init_cmd(
 @app.command("configure")
 def configure_cmd(
     target: str = typer.Argument(..., help="Video file or .project directory"),
-    language: Optional[str] = typer.Option(None, "--language", help="ru|en"),
-    prompt: Optional[str] = typer.Option(None, "--prompt", help="Whisper initial_prompt"),
+    language: str | None = typer.Option(None, "--language", help="ru|en"),
+    prompt: str | None = typer.Option(None, "--prompt", help="Whisper initial_prompt"),
     no_prompt: bool = typer.Option(False, "--no-prompt", help="Clear initial_prompt"),
     track_flags: list[str] = typer.Option(
         [],
@@ -406,7 +423,7 @@ def configure_cmd(
     ),
 ) -> None:
     """Re-enter project prompt, language, and track modes without running ASR."""
-    svc = _service(mock=True)
+    svc = _service(metadata_only=True)
     try:
         project_dir, _, needs_init = resolve_target(target)
         if needs_init or project_dir is None or not svc.repo.exists(project_dir):
@@ -455,13 +472,13 @@ def track_cmd(
     project: str = typer.Option(..., "--project"),
     track: int = typer.Option(..., "--track"),
     mode: str = typer.Option(..., "--mode", help="plain|diarized|skipped|pending"),
-    speaker: Optional[str] = typer.Option(
+    speaker: str | None = typer.Option(
         None, "--speaker", help="Optional override; plain defaults to SPEAKER_T{n}"
     ),
-    reason: Optional[str] = typer.Option(None, "--reason"),
+    reason: str | None = typer.Option(None, "--reason"),
 ) -> None:
     """Set track / channel mode."""
-    svc = _service()
+    svc = _service(metadata_only=True)
     try:
         project_dir = Path(project).resolve()
         proj = svc.load(project_dir)
@@ -499,7 +516,7 @@ def speakers_cmd(
     ),
 ) -> None:
     """Optional legacy speaker remapping (new runs use fixed SPEAKER_Tn / SPEAKER_TnDm)."""
-    svc = _service()
+    svc = _service(metadata_only=True)
     try:
         mapping: dict[str, str] = {}
         for item in map_pairs:
@@ -537,7 +554,7 @@ def stage_cmd(
         "--stage",
         help="extract|mixdown|transcribe-mix|attribute|transcribe|merge|minimize",
     ),
-    track: Optional[int] = typer.Option(None, "--track"),
+    track: int | None = typer.Option(None, "--track"),
     allow_raw_speakers: bool = typer.Option(False, "--allow-raw-speakers"),
     mock: bool = typer.Option(False, "--mock", hidden=True),
 ) -> None:
@@ -558,14 +575,22 @@ def stage_cmd(
                 svc.run_attribute(project_dir, proj)
             elif stage == "transcribe":
                 if track is None:
-                    raise AppError("--track required", code="track_required", exit_code=ExitCode.USAGE)
+                    raise AppError(
+                        "--track required",
+                        code="track_required",
+                        exit_code=ExitCode.USAGE,
+                    )
                 svc.run_transcribe(project_dir, proj, track)
             elif stage == "merge":
                 svc.run_merge(project_dir, proj, allow_raw_speakers=allow_raw_speakers)
             elif stage == "minimize":
                 svc.run_minimize(project_dir, proj)
             else:
-                raise AppError(f"unknown stage: {stage}", code="bad_stage", exit_code=ExitCode.USAGE)
+                raise AppError(
+                    f"unknown stage: {stage}",
+                    code="bad_stage",
+                    exit_code=ExitCode.USAGE,
+                )
             out.print(f"Stage {stage} completed")
         finally:
             svc.lock.release(project_dir)
@@ -575,7 +600,7 @@ def stage_cmd(
 
 @app.command("doctor")
 def doctor_cmd(
-    target: Optional[str] = typer.Argument(None),
+    target: str | None = typer.Argument(None),
 ) -> None:
     """Check environment and optional project health."""
     import os
@@ -616,8 +641,10 @@ def doctor_cmd(
         out.print(f"OK fluidaudio: {fluid}")
     else:
         out.print("OPTIONAL fluidaudio binary missing")
-        out.print("  Hint: build FluidAudio CLI and export A_WIZARD_FLUIDAUDIO_BIN=/path/to/fluidaudio")
-
+        out.print(
+            "  Hint: build FluidAudio CLI and export "
+            "A_WIZARD_FLUIDAUDIO_BIN=/path/to/fluidaudio"
+        )
     try:
         import sherpa_onnx  # noqa: F401
 
