@@ -58,6 +58,7 @@ from a_wizard.domain.freshness import (
     track_asr_config,
     transcribe_signature,
 )
+from a_wizard.domain.languages import normalize_language, stored_language
 from a_wizard.domain.models import (
     VIDEO_SUFFIXES,
     ProcessingMode,
@@ -390,7 +391,7 @@ class WizardService:
         track.mode = m
         # Language is project-level; keep track.language in sync for legacy manifests only.
         defaults = project.transcription_defaults or {}
-        track.language = language or defaults.get("language", "ru")
+        track.language = language or stored_language(defaults)
         if m == TrackMode.PLAIN:
             track.plain_speaker = speaker or canonical_plain_speaker(track_index)
             track.skip_reason = None
@@ -435,11 +436,7 @@ class WizardService:
         Returns a summary: changed, language, prompt_set, tracks, invalidated.
         Does not run any pipeline stage or persist the project.
         """
-        if language not in ("ru", "en"):
-            raise UsageError(
-                f"language must be ru or en, got {language!r}",
-                code="bad_language",
-            )
+        language = normalize_language(language)
         if not project.tracks:
             raise UsageError("Project has no tracks", code="no_tracks")
 
@@ -466,7 +463,7 @@ class WizardService:
 
         skip_reasons = skip_reasons or {}
         defaults = project.transcription_defaults or {}
-        old_lang = defaults.get("language", "ru")
+        old_lang = stored_language(defaults)
         old_prompt = defaults.get("initial_prompt")
         if isinstance(old_prompt, str) and not old_prompt.strip():
             old_prompt = None
@@ -708,7 +705,7 @@ class WizardService:
                 wav,
                 speaker=None,
                 model=defaults.get("model", "large-v3"),
-                language=defaults.get("language", "ru"),
+                language=stored_language(defaults),
                 compute_type=defaults.get("compute_type", "int8"),
                 device=defaults.get("device", "auto"),
                 initial_prompt=defaults.get("initial_prompt"),

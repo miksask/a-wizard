@@ -2,11 +2,15 @@
 
 No new persisted entities. Configure updates existing project fields and stage records.
 
+## Bundled data (amendment 2026-10-16)
+
+`domain/languages.py` holds a static Whisper language table (code → English name), aliases, and a small Russian-name map. It is not persisted and does not import ASR packages. A test cross-checks it with `mlx_whisper.tokenizer.LANGUAGES` when that package is installed.
+
 ## Fields written
 
 ### `transcription_defaults`
 
-- `language`: `ru` | `en`
+- `language`: `auto` | canonical Whisper language code (`ru`, `en`, `de`, ...). New projects default to `auto`; a missing value in an older manifest is read as `ru`.
 - `initial_prompt`: string or null
 - `initial_prompt_reviewed`: always `true` after a successful configure
 
@@ -25,7 +29,7 @@ Become `stale` per the configure invalidation matrix in [spec.md](./spec.md). Ex
 ## Validation
 
 - Target must already be an initialized project (manifest present).
-- Language must be `ru` or `en`.
+- Language must be `auto` or resolve to a supported Whisper language (code, name, alias, or supported Russian name; case-insensitive). It is stored as the canonical code. Otherwise `bad_language`.
 - Every track index in `--track` must exist; non-interactive mode requires a mode for every track.
 - `--prompt` and `--no-prompt` are mutually exclusive.
 - Track mode must be `plain`, `diarized`, or `skipped`.

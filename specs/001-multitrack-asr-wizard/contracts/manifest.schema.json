@@ -24,7 +24,7 @@
       "type": "object",
       "properties": {
         "model": { "type": "string" },
-        "language": { "type": "string" },
+        "language": { "type": "string", "description": "'auto' (Whisper detection) or a canonical Whisper language code, e.g. ru, en, de. New projects default to auto; a missing value is read as ru." },
         "compute_type": { "type": "string" },
         "device": { "type": "string" },
         "initial_prompt": { "type": ["string", "null"] },

@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 
 from a_wizard.domain.errors import AppError
+from a_wizard.domain.languages import LANGUAGE_AUTO, whisper_language
 from a_wizard.domain.models import DEFAULT_MLX_MODEL, Segment, TranscriptResult, Word
 
 
@@ -29,7 +30,7 @@ class MockAsrAdapter:
         *,
         speaker: str | None = None,
         model: str = "large-v3",
-        language: str = "ru",
+        language: str = LANGUAGE_AUTO,
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
@@ -79,7 +80,7 @@ class MlxWhisperAsrAdapter:
         *,
         speaker: str | None = None,
         model: str = DEFAULT_MLX_MODEL,
-        language: str = "ru",
+        language: str = LANGUAGE_AUTO,
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
@@ -105,7 +106,7 @@ class MlxWhisperAsrAdapter:
 
         kwargs: dict = {
             "path_or_hf_repo": repo,
-            "language": language,
+            "language": whisper_language(language),  # None = detect
             "word_timestamps": True,
             "condition_on_previous_text": False,
         }
@@ -155,7 +156,7 @@ class FasterWhisperAsrAdapter:
         *,
         speaker: str | None = None,
         model: str = "large-v3",
-        language: str = "ru",
+        language: str = LANGUAGE_AUTO,
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
@@ -178,7 +179,7 @@ class FasterWhisperAsrAdapter:
         spk = speaker or "SPEAKER_00"
         m = WhisperModel(model, compute_type=compute_type)
         kwargs: dict = {
-            "language": language,
+            "language": whisper_language(language),  # None = detect
             "vad_filter": True,
             "vad_parameters": dict(min_silence_duration_ms=500),
             "beam_size": 5,

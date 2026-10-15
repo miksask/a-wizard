@@ -33,3 +33,4 @@
 
 - Validation pass 2026-08-28: all items pass. CLI command/flag names match the style of specs 001 and 002 (product interface, not stack).
 - Ready for `/speckit-clarify` or `/speckit-plan`.
+- Amendment 2026-10-16 (US4, FR-015..FR-019, SC-006..SC-009): open questions were resolved with the operator (accepted input forms, reject unsupported, `--language` accepts any language, `auto` first and default). SC-009 and FR-017 name `mlx_whisper` / Whisper deliberately: they are the product's ASR vocabulary and the table-consistency guard. No `[NEEDS CLARIFICATION]` markers.

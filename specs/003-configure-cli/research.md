@@ -38,3 +38,24 @@
 **Rationale**: Matches FR-004 and the interrupt edge case.
 
 **Alternatives considered**: Save after each question — can leave a half-configured skipped set.
+
+## 5. Language choice beyond `ru` / `en` (amendment 2026-10-16)
+
+**Decision**: Menu `auto` / `ru` / `en` / `other`. `other` takes free text, accepted as a Whisper code, English name or alias, or a supported Russian name. Input is normalized to the canonical Whisper code and stored; unsupported input is rejected with `difflib` close matches. `auto` is stored literally and translated to `language=None` by the ASR adapters. `--language` accepts the same values.
+
+**Rationale**:
+- `faster-whisper` accepts only codes, while `mlx-whisper` also accepts names, so normalizing to a code works for both adapters.
+- Normalizing before storing and comparing means `De` / `German` / `de` produce one freshness hash and never trigger a spurious re-transcription.
+- The language table is bundled because `mlx-whisper` / `faster-whisper` are optional extras; validation must work in tests and in `configure` without them. A consistency test against `mlx_whisper.tokenizer.LANGUAGES` (skipped when not installed) guards against drift.
+- `auto` is first and the default for new projects: when the operator has not decided, detection is safer than a forced wrong language. Existing manifests keep their stored language; a manifest with no stored value is still read as `ru` so older projects behave as before.
+- One shared prompt function replaces the two duplicated `ru|en` prompts (first-run gate and `configure`).
+
+**Caveats**:
+- `per_track` + `auto`: each track is detected independently and may disagree. `mixdown` detects once on the mix. Documented in the README.
+- The initial prompt is not translated when the language changes; the operator owns it.
+
+**Alternatives considered**:
+- Free-text passthrough without validation — a typo would fail late inside the ASR adapter, after the operator has left.
+- Warn-and-accept for unknown languages — same late-failure risk; rejected by the operator.
+- Language list read from `mlx_whisper` at runtime — breaks validation when the optional extra is absent.
+- Keeping `ru` as the default for new projects — rejected by the operator in favor of `auto`.

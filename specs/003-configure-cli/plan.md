@@ -10,6 +10,19 @@ Add `a-wizard configure TARGET` so an operator can re-enter project language, Wh
 
 Technical approach: extend `mark_stale_downstream` with an `asr_config` change key; add `WizardService.apply_configure` that compares current vs requested settings and invalidates accordingly; add a Typer command that collects settings interactively or from flags, then calls the service under the project lock.
 
+### Amendment 2026-10-16: any Whisper language and `auto`
+
+The language question gains `auto` (first, default), `ru`, `en`, `other`. `other` takes a free-text language that is normalized to a Whisper code. Approach:
+
+- New `domain/languages.py`: bundled Whisper language table, `LANGUAGE_AUTO`, `DEFAULT_LANGUAGE = "auto"` (new projects), `LEGACY_LANGUAGE = "ru"` (manifest without a stored value), and `normalize_language()` raising `UsageError(code="bad_language")` with `difflib` suggestions.
+- `apply_configure` and `--language` call `normalize_language`; the ASR freshness hash already includes language, so normalization alone prevents spurious invalidation.
+- One shared `_prompt_language()` in `cli/app.py` replaces the two duplicated `ru|en` prompts (first-run gate and `configure`).
+- ASR adapters map `auto` → `language=None` via one helper; the manifest keeps `auto`.
+- README documents `per_track` vs `mixdown` behavior of `auto`.
+- Tests: normalization unit tests, configure invalidation, interactive prompt (mocked `input`), adapter language passthrough (mocked `mlx_whisper` / `faster_whisper`), and a consistency test against `mlx_whisper.tokenizer.LANGUAGES` (skipped if not installed).
+
+No new packages. Constitution check unchanged (local-first, atomic state, verifiable freshness, ports unchanged, synthetic tests).
+
 ## Technical Context
 
 **Language/Version**: Python 3.13
@@ -61,11 +74,15 @@ specs/003-configure-cli/
 ```text
 src/a_wizard/
   domain/freshness.py          # + asr_config invalidation
-  application/service.py       # + apply_configure
-  cli/app.py                   # + configure command
+  domain/languages.py          # + Whisper language table, normalize_language (amendment)
+  adapters/asr/engines.py      # + auto -> language=None (amendment)
+  application/service.py       # + apply_configure (normalize language)
+  cli/app.py                   # + configure command, shared _prompt_language
 
 tests/
   unit/test_domain.py          # + asr_config / no-op
+  unit/test_languages.py       # + normalization, table consistency (amendment)
+  application/test_configure.py # + language change / same-code no-op
   integration/test_pipeline.py # + configure then run
 ```
 

@@ -2,7 +2,7 @@
 
 ```text
 a-wizard configure TARGET
-  [--language ru|en]
+  [--language CODE|NAME|auto]
   [--prompt TEXT | --no-prompt]
   [--track N:mode]...
 ```
@@ -13,7 +13,7 @@ a-wizard configure TARGET
 
 | Flag | Meaning |
 |------|---------|
-| `--language ru\|en` | Project ASR language |
+| `--language CODE\|NAME\|auto` | Project ASR language: a Whisper language code (`de`), a language name (`German`, `немецкий`), or `auto` for Whisper detection. Normalized to a code before storing. Unsupported value → usage error (exit 2) with suggestions |
 | `--prompt TEXT` | Set Whisper `initial_prompt` |
 | `--no-prompt` | Clear `initial_prompt` |
 | `--track N:mode` | Repeatable. `mode` is `plain`, `diarized`, or `skipped`. Optional `N:mode:reason` for skip reason |
@@ -23,10 +23,24 @@ A supplied flag skips the matching interactive question.
 ## Interactive questions (TTY, missing flags)
 
 1. Project initial prompt: leave unchanged / disable / enter custom
-2. Project language: `ru` / `en`
+2. Project language (same question as the first-run gate in `run`):
+   ```text
+   Project language:
+     [1] auto (default)
+     [2] ru
+     [3] en
+     [4] other
+   ```
+   `other` prompts `Language (code or name): `. Input is normalized (case-insensitive, trimmed); an unsupported value prints close matches and re-asks.
 3. Each track: `plain` / `diarized` / `skipped`
 
-Current stored values are the defaults.
+Current stored values are the defaults. For language: `auto` when none was chosen; the matching item for stored `auto` / `ru` / `en`; `[4] other (current: de)` for any other stored code (Enter keeps it).
+
+## Language values
+
+- Stored in `transcription_defaults.language` as `auto` or a canonical Whisper code (`de`, `pl`, ...).
+- `auto` → adapters call Whisper without a forced language.
+- Error code for unsupported input: `bad_language`.
 
 ## Non-TTY
 

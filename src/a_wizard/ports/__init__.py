@@ -59,7 +59,7 @@ class TranscriptionEngine(Protocol):
         *,
         speaker: str | None = None,
         model: str = "large-v3",
-        language: str = "ru",
+        language: str = "auto",  # "auto" = Whisper language detection
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,

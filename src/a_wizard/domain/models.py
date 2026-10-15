@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
+from a_wizard.domain.languages import DEFAULT_LANGUAGE, LEGACY_LANGUAGE
+
 SCHEMA_VERSION = 2
 DEFAULT_GLYPHS = {"__EMPLOYEE__": "Δ", "__MANAGER__": "Ψ"}
 VIDEO_SUFFIXES = {".mkv", ".mp4", ".mov", ".webm", ".avi", ".m4v"}
@@ -259,7 +261,7 @@ class Track:
     wav: str
     mode: TrackMode = TrackMode.PENDING
     status: TrackStatus = TrackStatus.PENDING
-    language: str = "ru"
+    language: str = DEFAULT_LANGUAGE
     plain_speaker: str | None = None
     skip_reason: str | None = None
     initial_prompt: Any = field(default=...)  # Ellipsis = inherit; None = disabled
@@ -305,7 +307,7 @@ class Track:
             wav=str(data.get("wav") or f"tracks/track_{data['index']}.wav"),
             mode=TrackMode(data.get("mode", "pending")),
             status=TrackStatus(data.get("status", "pending")),
-            language=str(data.get("language") or "ru"),
+            language=str(data.get("language") or LEGACY_LANGUAGE),
             plain_speaker=data.get("plain_speaker"),
             skip_reason=data.get("skip_reason"),
             initial_prompt=prompt,
@@ -368,7 +370,7 @@ class Project:
             tracks=tracks,
             transcription_defaults={
                 "model": DEFAULT_MLX_MODEL,
-                "language": "ru",
+                "language": DEFAULT_LANGUAGE,
                 "compute_type": "int8",
                 "device": "auto",
                 "initial_prompt": None,

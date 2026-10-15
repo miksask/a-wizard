@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from a_wizard.domain.activity import DEFAULT_ACTIVITY_PARAMS, DEFAULT_CLEANUP_PARAMS
+from a_wizard.domain.languages import stored_language
 from a_wizard.domain.models import ProcessingMode, Project, StageStatus, Track
 
 ALGORITHM_VERSION = "a-wizard-2"
@@ -96,7 +97,7 @@ def track_asr_config(project: Project, track: Track) -> dict[str, Any]:
     defaults = project.transcription_defaults or {}
     config: dict[str, Any] = {
         "model": defaults.get("model", "large-v3"),
-        "language": defaults.get("language", "ru"),
+        "language": stored_language(defaults),
         "compute_type": defaults.get("compute_type", "int8"),
         "device": defaults.get("device", "auto"),
         "initial_prompt": defaults.get("initial_prompt"),
@@ -121,7 +122,7 @@ def mix_asr_config(project: Project) -> dict[str, Any]:
     defaults = project.transcription_defaults or {}
     config: dict[str, Any] = {
         "model": defaults.get("model"),
-        "language": defaults.get("language", "ru"),
+        "language": stored_language(defaults),
         "compute_type": defaults.get("compute_type", "int8"),
         "device": defaults.get("device", "auto"),
         "initial_prompt": defaults.get("initial_prompt"),

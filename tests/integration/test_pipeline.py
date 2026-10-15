@@ -360,6 +360,68 @@ def test_configure_cli_flags_and_missing_tracks(tmp_path: Path, mock_svc: Wizard
     assert project.tracks[1].mode.value == "skipped"
 
 
+def test_configure_cli_other_language(tmp_path: Path, mock_svc: WizardService):
+    from typer.testing import CliRunner
+
+    from a_wizard.cli.app import app
+
+    video = tmp_path / "lang.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "lang.project"
+    runner = CliRunner()
+    tail = ["--no-prompt", "--track", "0:plain", "--track", "1:skipped"]
+
+    def configure(language: str):
+        return runner.invoke(app, ["configure", str(project_dir), "--language", language, *tail])
+
+    ok = configure("German")
+    assert ok.exit_code == 0, ok.output
+    project = mock_svc.load(project_dir)
+    assert project.transcription_defaults["language"] == "de"
+    assert project.stage("transcribe:mix").status == StageStatus.STALE
+    assert project.stage("extract").status == StageStatus.SUCCEEDED
+
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+
+    # Another spelling of the same language is a no-op.
+    again = configure("de")
+    assert again.exit_code == 0, again.output
+    project = mock_svc.load(project_dir)
+    assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
+
+    bad = configure("klingon")
+    assert bad.exit_code == ExitCode.USAGE
+    assert mock_svc.load(project_dir).transcription_defaults["language"] == "de"
+
+    auto = configure("auto")
+    assert auto.exit_code == 0, auto.output
+    project = mock_svc.load(project_dir)
+    assert project.transcription_defaults["language"] == "auto"
+    assert project.stage("transcribe:mix").status == StageStatus.STALE
+
+
+def test_legacy_manifest_language_is_kept(tmp_path: Path, mock_svc: WizardService):
+    video = tmp_path / "legacy.mkv"
+    try:
+        _make_multitrack_mkv(video, tracks=2)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+
+    assert mock_svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "legacy.project"
+    project = mock_svc.load(project_dir)
+    project.transcription_defaults["language"] = "en"
+    mock_svc.repo.save(project_dir, project)
+    assert mock_svc.load(project_dir).transcription_defaults["language"] == "en"
+    # Same stored value is not invalidated by the new default (`auto`).
+    assert mock_svc.run_until_blocked(project_dir, print_fn=lambda s: None) == 0
+
+
 def test_missing_mix_raw_triggers_retranscribe(tmp_path: Path, mock_svc: WizardService):
     video = tmp_path / "fresh.mkv"
     try:

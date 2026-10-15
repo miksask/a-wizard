@@ -124,6 +124,9 @@ uv run a-wizard plan /path/to/recording.project --json
 uv run a-wizard configure /path/to/recording.project
 uv run a-wizard configure /path/to/recording.project \
   --language en --no-prompt --track 0:diarized --track 1:skipped
+# any Whisper language by code or name, or auto-detection
+uv run a-wizard configure /path/to/recording.project \
+  --language German --no-prompt --track 0:diarized --track 1:skipped
 uv run a-wizard run /path/to/recording.project
 
 # non-interactive first run
@@ -154,6 +157,16 @@ In mixdown mode (`run` stage order):
 6. merge → minimize (timing summary at the end of the run)
 
 To change settings after a finished (or mid) project, use `a-wizard configure` (not `run`): language/prompt changes stale mix transcription and downstream stages; track-mode-only changes keep mix ASR when possible. Extracted WAVs are never invalidated by configure.
+
+### Project language
+
+The language question offers `auto` (default), `ru`, `en`, and `other`. With `other` you type any language Whisper supports, as a code (`de`) or a name (`German`, `немецкий`); the wizard stores the Whisper code and rejects unknown languages with suggestions. `configure --language` accepts the same values, including `auto`. New projects start with `auto`; projects created earlier keep their stored language.
+
+- `auto` runs Whisper language detection and stores the literal `auto`.
+- In `mixdown` mode (default) detection runs once on the mix, so the whole recording gets one detected language.
+- In `per_track` mode each track is transcribed separately, so each track is detected independently. A quiet track or one with little speech can be detected wrongly; if the language is known, set it explicitly.
+- Changing the language (including to or from `auto`) stales transcription and downstream stages. Different spellings of the same language (`de`, `De`, `German`) change nothing.
+- The initial prompt is not translated when you change the language; update it with `configure` if needed.
 
 ### Speaker attribution
 

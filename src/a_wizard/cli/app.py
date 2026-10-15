@@ -15,6 +15,7 @@ from rich.table import Table
 from a_wizard.application.service import ServiceConfig, WizardService, resolve_target
 from a_wizard.domain.dag import ActionKind, NextAction
 from a_wizard.domain.errors import AppError, ExitCode, UsageError
+from a_wizard.domain.languages import LANGUAGE_AUTO, normalize_language, stored_language
 from a_wizard.domain.models import ProcessingMode, Project, TrackMode
 
 app = typer.Typer(
@@ -75,6 +76,39 @@ def _prompt_choice(prompt: str, options: list[str], *, default: int | None = Non
         console.print("Invalid choice, try again.")
 
 
+def _prompt_language(current: str | None) -> str:
+    """Ask for the project language: auto / ru / en / other. Returns auto or a Whisper code."""
+    try:
+        current_norm = normalize_language(current) if current else LANGUAGE_AUTO
+    except UsageError:
+        current_norm = None  # unknown stored value; shown as "other (current: ...)"
+    preset = (LANGUAGE_AUTO, "ru", "en")
+    if current_norm in preset:
+        default = preset.index(current_norm) + 1
+        other_label = "other"
+    else:
+        default = 4
+        other_label = f"other (current: {current_norm or current})"
+    choice = _prompt_choice(
+        "Project language:",
+        [LANGUAGE_AUTO, "ru", "en", other_label],
+        default=default,
+    )
+    if choice <= len(preset):
+        return preset[choice - 1]
+    while True:
+        raw = input("Language (code or name): ").strip()
+        if not raw:
+            if current_norm and current_norm not in preset:
+                return current_norm
+            console.print("Language is required for 'other'.")
+            continue
+        try:
+            return normalize_language(raw)
+        except UsageError as err:
+            console.print(f"[red]{err.message}[/red]")
+
+
 def _interactive_handler(svc: WizardService):
     def handle(project_dir: Path, project: Project, action: NextAction) -> bool:
         if action.kind == ActionKind.CONFIGURE_PROMPT:
@@ -96,8 +130,9 @@ def _interactive_handler(svc: WizardService):
                 text = input("initial_prompt text: ").strip()
                 project.transcription_defaults["initial_prompt"] = text or None
             project.transcription_defaults["initial_prompt_reviewed"] = True
-            lang_choice = _prompt_choice("Project language:", ["ru", "en"], default=1)
-            project.transcription_defaults["language"] = ("ru", "en")[lang_choice - 1]
+            project.transcription_defaults["language"] = _prompt_language(
+                stored_language(project.transcription_defaults)
+            )
             svc.repo.save(project_dir, project)
             return True
 
@@ -203,19 +238,14 @@ def _collect_configure(
         )
 
     if language is not None:
-        if language not in ("ru", "en"):
-            raise UsageError("language must be ru or en", code="bad_language")
-        chosen_lang = language
+        chosen_lang = normalize_language(language)
     elif tty:
-        current_lang = defaults.get("language", "ru")
-        lang_default = 1 if current_lang == "ru" else 2
-        lang_choice = _prompt_choice("Project language:", ["ru", "en"], default=lang_default)
-        chosen_lang = ("ru", "en")[lang_choice - 1]
+        chosen_lang = _prompt_language(stored_language(defaults))
     else:
         raise UsageError(
             "non-interactive configure requires --language",
             code="language_required",
-            next_step="pass --language ru|en",
+            next_step="pass --language CODE|NAME|auto (e.g. ru, German, auto)",
         )
 
     parsed: dict[int, tuple[str, str | None]] = {}
@@ -413,7 +443,11 @@ def init_cmd(
 @app.command("configure")
 def configure_cmd(
     target: str = typer.Argument(..., help="Video file or .project directory"),
-    language: str | None = typer.Option(None, "--language", help="ru|en"),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help="Whisper language code or name (ru, en, de, German, ...) or auto",
+    ),
     prompt: str | None = typer.Option(None, "--prompt", help="Whisper initial_prompt"),
     no_prompt: bool = typer.Option(False, "--no-prompt", help="Clear initial_prompt"),
     track_flags: list[str] = typer.Option(
