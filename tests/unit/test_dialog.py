@@ -56,3 +56,18 @@ def test_minimize_with_start_timestamps():
     plain_body = [ln for ln in untimed.split("\n\n", 1)[-1].splitlines() if ln]
     stripped = [ln.split("] ", 1)[1] for ln in timed_body]
     assert stripped == plain_body
+
+
+def test_minimize_with_creation_time_offset():
+    segs = [
+        Segment(0, 1000, "hello", "SPEAKER_T0"),
+        Segment(2500, 3000, "hi", "SPEAKER_T1"),
+    ]
+    # 15:30:00.000
+    offset_ms = ((15 * 3600) + (30 * 60)) * 1000
+    text = minimize_segments(
+        segs, {}, include_start_ts=True, ts_offset_ms=offset_ms
+    )
+    body = text.split("\n\n", 1)[-1]
+    assert "[15:30:00.000] [ST0]: hello" in body
+    assert "[15:30:02.500] [ST1]: hi" in body

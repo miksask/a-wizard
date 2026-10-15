@@ -467,6 +467,77 @@ def configure_cmd(
         raise typer.Exit(_handle_error(e)) from e
 
 
+def _print_options(project: Project) -> None:
+    from a_wizard.domain.freshness import audio_cleanup_enabled, hallucination_silence_threshold
+
+    threshold = hallucination_silence_threshold(project)
+    out.print(f"audio_cleanup: {'on' if audio_cleanup_enabled(project) else 'off'}")
+    out.print(
+        "hallucination_silence_threshold: "
+        + (f"{threshold:g} s" if threshold is not None else "off")
+    )
+
+
+@app.command("options")
+def options_cmd(
+    target: str = typer.Argument(..., help="Video file or .project directory"),
+    audio_cleanup: bool | None = typer.Option(
+        None,
+        "--audio-cleanup/--no-audio-cleanup",
+        help="Attenuate inactive tracks and normalize levels before ASR (re-runs ASR)",
+    ),
+    hallucination_silence: float | None = typer.Option(
+        None,
+        "--hallucination-silence",
+        help="Whisper hallucination_silence_threshold in seconds (re-runs ASR)",
+    ),
+    no_hallucination_silence: bool = typer.Option(
+        False, "--no-hallucination-silence", help="Clear hallucination_silence_threshold"
+    ),
+) -> None:
+    """Show or change opt-in ASR options (off by default)."""
+    svc = _service(metadata_only=True)
+    try:
+        if hallucination_silence is not None and no_hallucination_silence:
+            raise UsageError(
+                "--hallucination-silence and --no-hallucination-silence are mutually exclusive",
+                code="bad_option",
+            )
+        project_dir, _, needs_init = resolve_target(target)
+        if needs_init or project_dir is None or not svc.repo.exists(project_dir):
+            raise UsageError(
+                "Project not initialized",
+                code="not_initialized",
+                next_step="a-wizard init VIDEO  or  a-wizard run VIDEO",
+            )
+        if audio_cleanup is None and hallucination_silence is None and not no_hallucination_silence:
+            _print_options(svc.load(project_dir))
+            return
+        threshold: object = ...
+        if no_hallucination_silence:
+            threshold = None
+        elif hallucination_silence is not None:
+            threshold = hallucination_silence
+        svc.lock.acquire(project_dir)
+        try:
+            proj = svc.load(project_dir)
+            result = svc.apply_options(
+                proj, audio_cleanup=audio_cleanup, hallucination_silence=threshold
+            )
+            if result["changed"]:
+                svc.repo.save(project_dir, proj)
+        finally:
+            svc.lock.release(project_dir)
+        _print_options(proj)
+        if result["changed"]:
+            out.print("Options saved; dependent stages marked stale.")
+        else:
+            out.print("No options changed.")
+        out.print(f"Next: a-wizard run {project_dir}")
+    except AppError as e:
+        raise typer.Exit(_handle_error(e)) from e
+
+
 @app.command("track")
 def track_cmd(
     project: str = typer.Option(..., "--project"),

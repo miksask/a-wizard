@@ -103,6 +103,14 @@ def test_full_pipeline_mixdown_preset(tmp_path: Path, mock_svc: WizardService):
     stripped = [ln.split("] ", 1)[1] for ln in timed_body]
     assert stripped == plain_body
     assert all(ln.startswith("[") and "–" not in ln.split("] ", 1)[0] for ln in timed_body)
+    creation = (
+        project_dir / "dialog" / "dialog.minimize.ts.creation.txt"
+    ).read_text(encoding="utf-8")
+    assert creation.split("\n\n", 1)[0] == minimize.split("\n\n", 1)[0]
+    creation_body = [ln for ln in creation.split("\n\n", 1)[-1].splitlines() if ln]
+    assert [ln.split("] ", 1)[1] for ln in creation_body] == plain_body
+    assert creation_body[0].startswith("[")
+    assert not creation_body[0].startswith("[00:00:00.000]")
 
     project = mock_svc.load(project_dir)
     assert project.processing_mode == ProcessingMode.MIXDOWN
@@ -368,3 +376,104 @@ def test_missing_mix_raw_triggers_retranscribe(tmp_path: Path, mock_svc: WizardS
     assert project.stage("transcribe:mix").status == StageStatus.SUCCEEDED
     assert project.stage("extract").output_digests == extract_digest
     assert (project_dir / "transcripts" / "mix.raw.json").is_file()
+
+
+def _noisy_mic_and_desktop(video: Path, *, user_speaks: bool) -> None:
+    """Track 0: microphone with a noise floor (+ one user phrase); track 1: desktop audio
+    with digital silence between two remote phrases."""
+    import wave
+
+    import numpy as np
+
+    rate, seconds = 16000, 12
+    t = np.arange(rate * seconds) / rate
+    rng = np.random.default_rng(0)
+    mic = 0.012 * rng.standard_normal(len(t))
+    if user_speaks:
+        m = (t >= 9.0) & (t < 10.5)
+        mic[m] += 0.25 * np.sin(2 * np.pi * 300 * t[m])
+    desk = np.zeros(len(t))
+    for start, end in ((1.0, 4.0), (5.0, 8.0)):
+        m = (t >= start) & (t < end)
+        desk[m] = 0.3 * np.sin(2 * np.pi * 220 * t[m])
+    paths = []
+    for name, signal in (("mic", mic), ("desk", desk)):
+        path = video.parent / f"{video.stem}.{name}.wav"
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(np.clip(signal * 32767, -32768, 32767).astype("<i2").tobytes())
+        paths.append(path)
+    cmd = ["ffmpeg", "-y", "-i", str(paths[0]), "-i", str(paths[1])]
+    cmd += ["-map", "0:a", "-map", "1:a", "-c:a", "pcm_s16le", str(video)]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+
+def _desktop_words() -> list[Word]:
+    words = [Word(1100 + k * 450, 1500 + k * 450, f"remote{k}") for k in range(6)]
+    words.append(Word(3800, 4600, "stretched"))
+    words.append(Word(4500, 4500, "pause"))
+    words += [Word(5100 + k * 450, 5500 + k * 450, f"second{k}") for k in range(6)]
+    return words
+
+
+def test_noisy_mic_mixdown_keeps_desktop_phrases(tmp_path: Path):
+    import json
+
+    video = tmp_path / "call.mkv"
+    try:
+        _noisy_mic_and_desktop(video, user_speaks=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+    user = [Word(9100 + k * 450, 9500 + k * 450, f"user{k}") for k in range(3)]
+    words = sorted(_desktop_words() + user, key=lambda w: w.start_ms)
+    svc = WizardService(
+        config=ServiceConfig(use_mock_engines=True, processing_mode=ProcessingMode.MIXDOWN),
+        asr=MockAsrAdapter(segments=[Segment(1000, 10500, "x", "X")], words=words),
+        diar=MockDiarAdapter(
+            turns=[SpeakerTurn(1000, 4000, "S1"), SpeakerTurn(5000, 8000, "S2")]
+        ),
+    )
+    assert svc.run_until_blocked(video, preset="obs-interview", print_fn=lambda s: None) == 0
+    project_dir = tmp_path / "call.project"
+    dialog = json.loads((project_dir / "dialog" / "dialog.json").read_text(encoding="utf-8"))
+    speakers = [seg["speaker"] for seg in dialog]
+    assert speakers == ["SPEAKER_T1D1", "SPEAKER_T1D2", "SPEAKER_T0"]
+    assert "user0" in dialog[-1]["text"] and "pause" in dialog[0]["text"]
+    report = json.loads((project_dir / "meta" / "attribution.json").read_text())
+    assert report["fallback"] is False
+    assert any(w.startswith("track 0: noisy channel") for w in report["warnings"])
+
+
+def test_per_track_drops_duplicates_from_silent_track(tmp_path: Path):
+    import json
+
+    video = tmp_path / "dup.mkv"
+    try:
+        _noisy_mic_and_desktop(video, user_speaks=False)
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        pytest.skip(f"ffmpeg unavailable: {e}")
+    words = _desktop_words()
+    svc = WizardService(
+        config=ServiceConfig(use_mock_engines=True, processing_mode=ProcessingMode.PER_TRACK),
+        asr=MockAsrAdapter(segments=[Segment(1000, 8000, "x", "X")], words=words),
+        diar=MockDiarAdapter(turns=[SpeakerTurn(1000, 4000, "S1"), SpeakerTurn(5000, 8000, "S2")]),
+    )
+    code = svc.run_until_blocked(
+        video,
+        preset="obs-interview",
+        processing_mode=ProcessingMode.PER_TRACK,
+        print_fn=lambda s: None,
+    )
+    assert code == ExitCode.SUCCESS
+    project_dir = tmp_path / "dup.project"
+    dialog = json.loads((project_dir / "dialog" / "dialog.json").read_text(encoding="utf-8"))
+    assert {seg["speaker"] for seg in dialog} == {"SPEAKER_T1D1", "SPEAKER_T1D2"}
+    text = " ".join(seg["text"] for seg in dialog)
+    assert text.count("remote0") == 1
+    assert (project_dir / "transcripts" / "track_0.words.json").is_file()
+    report = json.loads((project_dir / "meta" / "track_filter.json").read_text())
+    rows = {row["index"]: row for row in report["tracks"]}
+    assert rows[0]["kept_count"] == 0
+    assert rows[1]["kept_count"] == len(words)

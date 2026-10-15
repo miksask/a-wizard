@@ -15,8 +15,10 @@ from a_wizard.domain.models import (
     StageStatus,
     TrackMode,
     TrackStatus,
+    Word,
     canonical_plain_speaker,
     format_stage_timings,
+    normalize_diar_label,
     short_speaker_id,
     stage_durations,
     track_scoped_speaker,
@@ -39,6 +41,58 @@ def test_track_scoped_speaker():
     assert canonical_plain_speaker(0) == "SPEAKER_T0"
     assert short_speaker_id("SPEAKER_T0D1") == "ST0D1"
     assert short_speaker_id("SPEAKER_T3") == "ST3"
+
+
+def test_normalize_diar_label_variants():
+    cases = {
+        "S1": "SPEAKER_01",
+        "s10": "SPEAKER_10",
+        "spk_2": "SPEAKER_02",
+        "Speaker 3": "SPEAKER_03",
+        "4": "SPEAKER_04",
+        "SPEAKER_S7": "SPEAKER_07",
+        "SPEAKER_00": "SPEAKER_00",
+        "SPEAKER_T1D2": "SPEAKER_T1D2",
+        "alice": "SPEAKER_alice",
+        "": "SPEAKER_00",
+    }
+    for raw, expected in cases.items():
+        assert normalize_diar_label(raw) == expected, raw
+    assert normalize_diar_label(5) == "SPEAKER_05"
+
+
+def test_track_scoped_speaker_legacy_and_unknown_labels():
+    assert track_scoped_speaker(0, "SPEAKER_S3") == "SPEAKER_T0D3"
+    assert track_scoped_speaker(2, "S1") == "SPEAKER_T2D1"
+    assert track_scoped_speaker(1, "SPEAKER_alice") == "SPEAKER_T1_alice"
+    assert track_scoped_speaker(1, "__MANAGER__") == "__MANAGER__"
+    assert short_speaker_id(track_scoped_speaker(0, "SPEAKER_S3")) == "ST0D3"
+
+
+def test_word_flags_serialize_only_when_set():
+    plain = Word(0, 10, "x").to_dict()
+    assert "silent" not in plain and "dropped" not in plain
+    flagged = Word(0, 10, "x", silent=True, dropped=True)
+    data = flagged.to_dict()
+    assert data["silent"] is True and data["dropped"] is True
+    assert Word.from_dict(data) == flagged
+
+
+def test_adapter_labels_are_normalized():
+    from a_wizard.adapters.diarization.fluidaudio import _parse_fluidaudio_json
+    from a_wizard.adapters.diarization.speakrs import parse_rttm
+
+    turns = _parse_fluidaudio_json(
+        {
+            "segments": [
+                {"speakerId": "S1", "startTimeSeconds": 0.0, "endTimeSeconds": 1.5},
+                {"speakerId": "S10", "startTimeSeconds": 1.5, "endTimeSeconds": 2.0},
+            ]
+        }
+    )
+    assert [t.speaker for t in turns] == ["SPEAKER_01", "SPEAKER_10"]
+    rttm = "SPEAKER file 1 0.00 1.00 <NA> <NA> spk3 <NA> <NA>\n"
+    assert parse_rttm(rttm)[0].speaker == "SPEAKER_03"
 
 
 def test_detect_next_action_flow():

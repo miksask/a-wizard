@@ -9,10 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from a_wizard.domain.activity import DEFAULT_ACTIVITY_PARAMS, DEFAULT_CLEANUP_PARAMS
 from a_wizard.domain.models import ProcessingMode, Project, StageStatus, Track
 
 ALGORITHM_VERSION = "a-wizard-2"
 ENERGY_ALGORITHM_VERSION = "a-wizard-2-energy-v1"
+ATTRIBUTION_ALGORITHM_VERSION = "a-wizard-2-attr-v2"
+CLEANUP_ALGORITHM_VERSION = "a-wizard-2-cleanup-v1"
+DIAR_CACHE_VERSION = "a-wizard-2-diar-v1"
 
 
 def sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
@@ -57,10 +61,40 @@ def signature(*parts: Any) -> str:
     return sha256_bytes(payload.encode("utf-8"))
 
 
+def audio_cleanup_enabled(project: Project) -> bool:
+    return bool((project.transcription_defaults or {}).get("audio_cleanup"))
+
+
+def hallucination_silence_threshold(project: Project) -> float | None:
+    value = (project.transcription_defaults or {}).get("hallucination_silence_threshold")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
+def attribution_config() -> dict[str, Any]:
+    return {
+        "version": ATTRIBUTION_ALGORITHM_VERSION,
+        "params": DEFAULT_ACTIVITY_PARAMS.to_dict(),
+    }
+
+
+def cleanup_config() -> dict[str, Any]:
+    return {
+        "version": CLEANUP_ALGORITHM_VERSION,
+        "params": DEFAULT_CLEANUP_PARAMS.to_dict(),
+        "activity": attribution_config(),
+    }
+
+
 def track_asr_config(project: Project, track: Track) -> dict[str, Any]:
     """ASR options for a track — language/prompt always from project defaults."""
     defaults = project.transcription_defaults or {}
-    return {
+    config: dict[str, Any] = {
         "model": defaults.get("model", "large-v3"),
         "language": defaults.get("language", "ru"),
         "compute_type": defaults.get("compute_type", "int8"),
@@ -71,11 +105,21 @@ def track_asr_config(project: Project, track: Track) -> dict[str, Any]:
         "adapter": project.adapters.get("asr"),
         "diar_adapter": project.adapters.get("diarization"),
     }
+    threshold = hallucination_silence_threshold(project)
+    if threshold is not None:
+        config["hallucination_silence_threshold"] = threshold
+    if audio_cleanup_enabled(project):
+        config["audio_cleanup"] = {
+            **cleanup_config(),
+            "active": [t.index for t in project.tracks if t.mode.value in ("plain", "diarized")],
+            "extract": project.stage("extract").output_digests,
+        }
+    return config
 
 
 def mix_asr_config(project: Project) -> dict[str, Any]:
     defaults = project.transcription_defaults or {}
-    return {
+    config: dict[str, Any] = {
         "model": defaults.get("model"),
         "language": defaults.get("language", "ru"),
         "compute_type": defaults.get("compute_type", "int8"),
@@ -83,6 +127,10 @@ def mix_asr_config(project: Project) -> dict[str, Any]:
         "initial_prompt": defaults.get("initial_prompt"),
         "adapter": project.adapters.get("asr"),
     }
+    threshold = hallucination_silence_threshold(project)
+    if threshold is not None:
+        config["hallucination_silence_threshold"] = threshold
+    return config
 
 
 def channel_roles(project: Project) -> list[dict[str, Any]]:
@@ -108,13 +156,16 @@ def extract_signature(project: Project) -> str:
 
 def mixdown_signature(project: Project) -> str:
     active = [t.index for t in project.tracks if t.mode.value != "skipped"]
-    return signature(
+    parts: list[Any] = [
         "mixdown",
         project.mix.wav,
         active,
         project.stage("extract").output_digests,
         project.adapters.get("media"),
-    )
+    ]
+    if audio_cleanup_enabled(project):
+        parts.append({"audio_cleanup": cleanup_config()})
+    return signature(*parts)
 
 
 def mix_transcribe_signature(project: Project) -> str:
@@ -133,6 +184,7 @@ def attribute_signature(project: Project) -> str:
         project.adapters.get("diarization"),
         project.stage("transcribe:mix").output_digests,
         project.stage("mixdown").output_digests,
+        attribution_config(),
     )
 
 
@@ -163,7 +215,7 @@ def merge_signature(project: Project) -> str:
                 "status": t.status.value,
             }
         )
-    return signature("merge", parts)
+    return signature("merge", parts, attribution_config())
 
 
 def minimize_signature(project: Project) -> str:
@@ -247,6 +299,7 @@ def _minimize_contract(project: Project) -> StageContract:
         signature_fn=minimize_signature,
         required_outputs=(
             "dialog/dialog.minimize.ts.txt",
+            "dialog/dialog.minimize.ts.creation.txt",
             "dialog/dialog.minimize.txt",
             "dialog/transcript.txt",
         ),
@@ -351,6 +404,17 @@ def mark_stale_downstream(project: Project, changed: str) -> list[str]:
         stale("mixdown")
         stale("transcribe:mix")
         stale("attribute")
+        stale("merge")
+        stale("minimize")
+    elif changed == "audio_cleanup":
+        if project.processing_mode == ProcessingMode.MIXDOWN:
+            stale("mixdown")
+            stale("transcribe:mix")
+            stale("attribute")
+        else:
+            for t in project.tracks:
+                if t.mode.value != "skipped":
+                    stale(f"transcribe:{t.index}")
         stale("merge")
         stale("minimize")
     elif changed.startswith("track:"):

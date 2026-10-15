@@ -72,6 +72,7 @@ def minimize_segments(
     glyphs: dict[str, str],
     *,
     include_start_ts: bool = False,
+    ts_offset_ms: int = 0,
 ) -> str:
     speakers_seen: list[str] = []
     for s in segs:
@@ -94,7 +95,7 @@ def minimize_segments(
     def flush(speaker: str, texts: list[str], start_ms: int) -> None:
         body = f"{prefixes[speaker]}: {' '.join(texts)}"
         if include_start_ts:
-            lines.append(f"[{fmt_ts(start_ms)}] {body}")
+            lines.append(f"[{fmt_ts(start_ms + ts_offset_ms)}] {body}")
         else:
             lines.append(body)
 

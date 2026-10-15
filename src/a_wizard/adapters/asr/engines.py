@@ -21,6 +21,7 @@ class MockAsrAdapter:
         self._result = result
         self._segments = segments
         self._words = words
+        self.last_options: dict[str, float | None] = {}
 
     def transcribe(
         self,
@@ -32,7 +33,9 @@ class MockAsrAdapter:
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
+        hallucination_silence_threshold: float | None = None,
     ) -> TranscriptResult:
+        self.last_options = {"hallucination_silence_threshold": hallucination_silence_threshold}
         if self._result is not None:
             spk = speaker
             segs = [
@@ -80,6 +83,7 @@ class MlxWhisperAsrAdapter:
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
+        hallucination_silence_threshold: float | None = None,
     ) -> TranscriptResult:
         try:
             import mlx_whisper
@@ -107,6 +111,8 @@ class MlxWhisperAsrAdapter:
         }
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
+        if hallucination_silence_threshold:
+            kwargs["hallucination_silence_threshold"] = float(hallucination_silence_threshold)
 
         result = mlx_whisper.transcribe(str(wav), **kwargs)
         spk = speaker or "SPEAKER_00"
@@ -153,6 +159,7 @@ class FasterWhisperAsrAdapter:
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
+        hallucination_silence_threshold: float | None = None,
     ) -> TranscriptResult:
         try:
             from faster_whisper import WhisperModel
@@ -179,6 +186,8 @@ class FasterWhisperAsrAdapter:
         }
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
+        if hallucination_silence_threshold:
+            kwargs["hallucination_silence_threshold"] = float(hallucination_silence_threshold)
         segments, _info = m.transcribe(str(wav), **kwargs)
         out: list[Segment] = []
         words: list[Word] = []

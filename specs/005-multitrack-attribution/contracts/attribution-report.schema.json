@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a-wizard.local/schemas/attribution-report.schema.json",
+  "title": "AttributionReport",
+  "type": "object",
+  "required": [
+    "algorithm_version",
+    "word_count",
+    "kept_word_count",
+    "ambiguous_count",
+    "ambiguous_ratio",
+    "silent_count",
+    "context_resolved_count",
+    "smoothed_count",
+    "dropped_count",
+    "fallback",
+    "channels",
+    "tracks",
+    "crosstalk",
+    "warnings"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "algorithm_version": { "type": "string", "minLength": 1 },
+    "word_count": { "type": "integer", "minimum": 0 },
+    "kept_word_count": { "type": "integer", "minimum": 0 },
+    "ambiguous_count": { "type": "integer", "minimum": 0 },
+    "ambiguous_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "silent_count": { "type": "integer", "minimum": 0 },
+    "context_resolved_count": { "type": "integer", "minimum": 0 },
+    "smoothed_count": { "type": "integer", "minimum": 0 },
+    "dropped_count": { "type": "integer", "minimum": 0 },
+    "fallback": { "type": "boolean" },
+    "channels": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "mode",
+          "noise_floor_rms",
+          "speech_level_rms",
+          "active_ratio",
+          "word_count",
+          "segment_count"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "mode": { "enum": ["plain", "diarized"] },
+          "noise_floor_rms": { "type": "number", "minimum": 0 },
+          "speech_level_rms": { "type": "number", "minimum": 0 },
+          "active_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+          "word_count": { "type": "integer", "minimum": 0 },
+          "segment_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "crosstalk": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["src", "dst", "lag_ms", "gain", "corr", "compensated"],
+        "additionalProperties": false,
+        "properties": {
+          "src": { "type": "integer", "minimum": 0 },
+          "dst": { "type": "integer", "minimum": 0 },
+          "lag_ms": { "type": "integer", "minimum": 0 },
+          "gain": { "type": "number", "minimum": 0 },
+          "corr": { "type": "number", "minimum": -1, "maximum": 1 },
+          "compensated": {
+            "type": "boolean",
+            "description": "false for lag 0 (same sound on both tracks, direction unknown)"
+          }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

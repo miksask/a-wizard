@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from a_wizard.domain.errors import AppError
-from a_wizard.domain.models import SpeakerTurn
+from a_wizard.domain.models import SpeakerTurn, normalize_diar_label
 
 
 def fluidaudio_bin() -> str | None:
@@ -92,19 +92,12 @@ def _parse_fluidaudio_json(data: dict | list) -> list[SpeakerTurn]:
     for seg in segments:
         if not isinstance(seg, dict):
             continue
-        speaker = (
+        speaker = normalize_diar_label(
             seg.get("speakerId")
             or seg.get("speaker")
             or seg.get("label")
             or "SPEAKER_00"
         )
-        speaker = str(speaker)
-        if not speaker.startswith("SPEAKER_"):
-            # normalize numeric ids
-            if speaker.isdigit():
-                speaker = f"SPEAKER_{int(speaker):02d}"
-            else:
-                speaker = f"SPEAKER_{speaker}"
         start = seg.get("startTimeSeconds", seg.get("start", seg.get("start_ms")))
         end = seg.get("endTimeSeconds", seg.get("end", seg.get("end_ms")))
         if start is None or end is None:

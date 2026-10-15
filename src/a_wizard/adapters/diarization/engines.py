@@ -6,11 +6,12 @@ import os
 from pathlib import Path
 
 from a_wizard.domain.errors import AppError, BlockedError
-from a_wizard.domain.models import SpeakerTurn
+from a_wizard.domain.models import SpeakerTurn, normalize_diar_label
 
 
 class MockDiarAdapter:
     adapter_id = "mock-diar"
+    cacheable = False
 
     def __init__(
         self,
@@ -85,7 +86,11 @@ class PyannoteCommunity1Adapter:
         diarization = pipeline(str(wav), num_speakers=num_speakers)
         turns: list[SpeakerTurn] = []
         for turn, _, speaker in diarization.itertracks(yield_label=True):
-            turns.append(SpeakerTurn.from_seconds(float(turn.start), float(turn.end), str(speaker)))
+            turns.append(
+                SpeakerTurn.from_seconds(
+                    float(turn.start), float(turn.end), normalize_diar_label(speaker)
+                )
+            )
         return turns
 
 

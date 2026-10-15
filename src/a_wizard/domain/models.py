@@ -18,6 +18,7 @@ _DIAR_SPEAKER_RE = re.compile(r"^SPEAKER_(\d+)$")
 _CANONICAL_PLAIN_RE = re.compile(r"^SPEAKER_T(\d+)$")
 _CANONICAL_DIAR_RE = re.compile(r"^SPEAKER_T(\d+)D(\d+)$")
 _LEGACY_SCOPED_RE = re.compile(r"^T(\d+)/SPEAKER_(\d+)$")
+_LABEL_NUM_RE = re.compile(r"^(?:speaker|spk|s)?[_\-\s]*(\d+)$", re.IGNORECASE)
 
 
 def utc_now_iso() -> str:
@@ -60,6 +61,8 @@ class Word:
     speaker: str | None = None
     channel: int | None = None
     ambiguous: bool = False
+    silent: bool = False
+    dropped: bool = False
 
     def __post_init__(self) -> None:
         if self.start_ms < 0 or self.end_ms < self.start_ms:
@@ -72,26 +75,33 @@ class Word:
         return cls(int(round(start * 1000)), int(round(end * 1000)), text.strip(), **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data: dict[str, Any] = {
+            "start_ms": self.start_ms,
+            "end_ms": self.end_ms,
+            "text": self.text,
+            "speaker": self.speaker,
+            "channel": self.channel,
+            "ambiguous": self.ambiguous,
+        }
+        if self.silent:
+            data["silent"] = True
+        if self.dropped:
+            data["dropped"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Word:
+        flags = {
+            "speaker": data.get("speaker"),
+            "channel": data.get("channel"),
+            "ambiguous": bool(data.get("ambiguous", False)),
+            "silent": bool(data.get("silent", False)),
+            "dropped": bool(data.get("dropped", False)),
+        }
         if "start_ms" in data:
-            return cls(
-                int(data["start_ms"]),
-                int(data["end_ms"]),
-                str(data["text"]),
-                speaker=data.get("speaker"),
-                channel=data.get("channel"),
-                ambiguous=bool(data.get("ambiguous", False)),
-            )
+            return cls(int(data["start_ms"]), int(data["end_ms"]), str(data["text"]), **flags)
         return cls.from_seconds(
-            float(data["start"]),
-            float(data["end"]),
-            str(data["text"]),
-            speaker=data.get("speaker"),
-            channel=data.get("channel"),
-            ambiguous=bool(data.get("ambiguous", False)),
+            float(data["start"]), float(data["end"]), str(data["text"]), **flags
         )
 
 
@@ -412,6 +422,7 @@ class Project:
             "minimize": {
                 "status": self.stage("minimize").status.value,
                 "dialog_minimize_ts_txt": "dialog/dialog.minimize.ts.txt",
+                "dialog_minimize_ts_creation_txt": "dialog/dialog.minimize.ts.creation.txt",
                 "dialog_minimize_txt": "dialog/dialog.minimize.txt",
                 "transcript_txt": "dialog/transcript.txt",
                 "speaker_glyphs": dict(self.speaker_glyphs),
@@ -466,19 +477,34 @@ def canonical_plain_speaker(track_index: int) -> str:
     return f"SPEAKER_T{track_index}"
 
 
+def normalize_diar_label(raw: object) -> str:
+    """Normalize diarizer ids (``3``, ``S1``, ``spk_2``, ``SPEAKER_S3``) to ``SPEAKER_NN``."""
+    label = str(raw).strip()
+    if not label:
+        return "SPEAKER_00"
+    if _CANONICAL_DIAR_RE.match(label) or _CANONICAL_PLAIN_RE.match(label):
+        return label
+    body = label[len("SPEAKER_"):] if label.upper().startswith("SPEAKER_") else label
+    m = _LABEL_NUM_RE.match(body)
+    if m:
+        return f"SPEAKER_{int(m.group(1)):02d}"
+    return label if label.startswith("SPEAKER_") else f"SPEAKER_{label}"
+
+
 def track_scoped_speaker(track_index: int, speaker: str) -> str:
-    """Map diarizer raw labels to SPEAKER_T{track}D{voice} (0-based indices)."""
+    """Map diarizer raw labels to SPEAKER_T{track}D{voice} (0-based track index)."""
     if _CANONICAL_DIAR_RE.match(speaker) or _CANONICAL_PLAIN_RE.match(speaker):
         return speaker
     legacy = _LEGACY_SCOPED_RE.match(speaker)
     if legacy:
         return f"SPEAKER_T{legacy.group(1)}D{int(legacy.group(2))}"
-    diar = _DIAR_SPEAKER_RE.match(speaker)
+    if not (speaker.startswith("SPEAKER_") or _LABEL_NUM_RE.match(speaker)):
+        return speaker
+    normalized = normalize_diar_label(speaker)
+    diar = _DIAR_SPEAKER_RE.match(normalized)
     if diar:
         return f"SPEAKER_T{track_index}D{int(diar.group(1))}"
-    if speaker.isdigit():
-        return f"SPEAKER_T{track_index}D{int(speaker)}"
-    return speaker
+    return f"SPEAKER_T{track_index}_{normalized[len('SPEAKER_'):]}"
 
 
 def short_speaker_id(canonical: str) -> str:

@@ -6,18 +6,19 @@ Local, resume-safe multitrack ASR — fast on Apple Silicon (mlx-whisper turbo ~
   <img src="A-WIZARD.png" alt="UnGPT icon"/>
 </p>
 
-The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, and `specs/004-pipeline-hardening/`.
+The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, `specs/004-pipeline-hardening/`, and `specs/005-multitrack-attribution/`.
 
 ## Features
 
-- **Mixdown (default)**: one ASR pass over `tracks/mix.wav` (MLX Whisper) plus speaker attribution based on source-channel energy
+- **Mixdown (default)**: one ASR pass over `tracks/mix.wav` (MLX Whisper) plus speaker attribution based on per-track activity (level over each track's own noise floor)
 - Extraction of N audio tracks (ffmpeg) as mono 16 kHz PCM
-- Channel modes: `plain` / `diarized` / `skipped`
-- ASR-free diarization: FluidAudio (CoreML), sherpa-onnx, and experimental speakrs
+- Channel modes: `plain` / `diarized` / `skipped`; any number of tracks, several of them diarized
+- Automatic crosstalk detection between tracks (rooms that hear each other) and removal of Whisper hallucinations in silence
+- ASR-free diarization: FluidAudio (CoreML), sherpa-onnx, and experimental speakrs (cached per track)
 - Fallback ASR: faster-whisper (non-Apple platforms)
-- Merge → canonical `dialog.json` → `dialog.minimize.ts.txt` → `dialog.minimize.txt` (+ `transcript.txt` copy)
+- Merge → canonical `dialog.json` → `dialog.minimize.ts.txt` / `dialog.minimize.ts.creation.txt` → `dialog.minimize.txt` (+ `transcript.txt` copy)
 - Atomic manifest, project lock, freshness/invalidation
-- Commands: `run`, `status`, `plan`, `init`, `configure`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
+- Commands: `run`, `status`, `plan`, `init`, `configure`, `options`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
 
 ## Installation
 
@@ -141,7 +142,7 @@ uv run a-wizard bench diar --input /path/to/track.wav --backends fluidaudio,sher
 uv run a-wizard run recording.mkv --preset obs-interview --mock
 ```
 
-Primary output: `recording.project/dialog/dialog.minimize.txt` (timed: `dialog.minimize.ts.txt`; same untimed content also as `dialog/transcript.txt`).
+Primary output: `recording.project/dialog/dialog.minimize.txt` (timed from zero: `dialog.minimize.ts.txt`; timed from file-creation clock time: `dialog.minimize.ts.creation.txt`; same untimed content also as `dialog/transcript.txt`).
 
 In mixdown mode (`run` stage order):
 
@@ -149,10 +150,37 @@ In mixdown mode (`run` stage order):
 2. first-run gates (during `run`): project prompt + language; track mode (`plain` → `SPEAKER_T{n}`, `diarized` → later `SPEAKER_T{n}D{k}`, `skipped` excluded from mix)
 3. mixdown → `tracks/mix.wav` (excluding `skipped` tracks)
 4. ASR (one pass with word timestamps)
-5. attribute: channel RMS energy; neural diarization on diarized channels → `SPEAKER_T{n}D{k}`
+5. attribute: per-track activity (see below); neural diarization on diarized channels → `SPEAKER_T{n}D{k}`
 6. merge → minimize (timing summary at the end of the run)
 
 To change settings after a finished (or mid) project, use `a-wizard configure` (not `run`): language/prompt changes stale mix transcription and downstream stages; track-mode-only changes keep mix ASR when possible. Extracted WAVs are never invalidated by configure.
+
+### Speaker attribution
+
+Each ASR word is attributed to a track by comparing tracks against their own noise floor, never by raw loudness across tracks (a microphone's room noise would otherwise beat a desktop track's digital silence and steal words from remote speakers):
+
+- a track is a candidate for a word only when it is ≥ 9.5 dB over its local noise floor; when one candidate is ≥ 18 dB, weaker ones are ignored (loudspeaker bleed, room noise);
+- several candidates are compared by level relative to each track's typical speech level, so microphones with different gains (separate rooms) are compared fairly;
+- words without a clear winner join the nearest confidently attributed word; 1–2 word islands without strong evidence are merged into the surrounding speaker;
+- a delayed copy of one track inside another (rooms on one call hearing each other) is detected and subtracted automatically;
+- words with no speech under them that are ≥ 2 s away from real speech (Whisper hallucinations such as "Thank you.") are left out of the dialog; they stay in `transcripts/mix.raw.json` and are flagged `dropped` in `transcripts/mix.segments.json`.
+
+`meta/attribution.json` reports per-track noise floor, speech level, active ratio, word/segment counts, detected crosstalk, and warnings (noisy channel, track without speech). In `per_track` mode the same model filters each track's own transcript at merge time (`meta/track_filter.json`): hallucinations on silent tracks and duplicates caused by crosstalk are removed.
+
+Projects processed with an older attribution version redo only attribute → merge → minimize on the next `run` (no new ASR).
+
+### Opt-in ASR options
+
+Off by default; enabling them redoes ASR (minutes per recording):
+
+```bash
+uv run a-wizard options /path/to/recording.project                       # show
+uv run a-wizard options /path/to/recording.project --audio-cleanup       # gate inactive tracks + level-normalize before ASR
+uv run a-wizard options /path/to/recording.project --hallucination-silence 2   # Whisper hallucination_silence_threshold (s)
+uv run a-wizard options /path/to/recording.project --no-audio-cleanup --no-hallucination-silence
+```
+
+`--audio-cleanup` helps recordings with several noisy microphones; it can attenuate very quiet speech in a very noisy microphone, so check the result.
 
 ## Tests
 

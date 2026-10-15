@@ -28,7 +28,16 @@
         "compute_type": { "type": "string" },
         "device": { "type": "string" },
         "initial_prompt": { "type": ["string", "null"] },
-        "initial_prompt_reviewed": { "type": "boolean" }
+        "initial_prompt_reviewed": { "type": "boolean" },
+        "audio_cleanup": {
+          "type": "boolean",
+          "description": "Opt-in (005): gated/normalized ASR input; absent = false"
+        },
+        "hallucination_silence_threshold": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Opt-in (005): Whisper hallucination_silence_threshold seconds; absent = off"
+        }
       }
     },
     "tracks": {

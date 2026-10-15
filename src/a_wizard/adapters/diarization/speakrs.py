@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from a_wizard.domain.errors import AppError
-from a_wizard.domain.models import SpeakerTurn
+from a_wizard.domain.models import SpeakerTurn, normalize_diar_label
 
 
 def speakrs_bin() -> str | None:
@@ -77,11 +77,6 @@ def parse_rttm(text: str) -> list[SpeakerTurn]:
             continue
         start = float(parts[3])
         dur = float(parts[4])
-        speaker = parts[7]
-        if not speaker.startswith("SPEAKER_"):
-            if speaker.isdigit():
-                speaker = f"SPEAKER_{int(speaker):02d}"
-            else:
-                speaker = f"SPEAKER_{speaker}"
+        speaker = normalize_diar_label(parts[7])
         turns.append(SpeakerTurn.from_seconds(start, start + dur, speaker))
     return turns

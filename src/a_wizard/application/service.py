@@ -7,6 +7,7 @@ import os
 import signal
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,7 @@ from uuid import uuid4
 from a_wizard.adapters.asr.engines import resolve_asr_adapter
 from a_wizard.adapters.diarization.engines import resolve_diar_adapter
 from a_wizard.adapters.media.ffmpeg import FfmpegMediaAdapter
+from a_wizard.adapters.media.gain_mix import WavGainMixer
 from a_wizard.adapters.persistence import (
     FileProjectLock,
     FsArtifactStore,
@@ -21,12 +23,15 @@ from a_wizard.adapters.persistence import (
     YamlProjectRepository,
     project_dir_for_video,
 )
+from a_wizard.application.activity import build_activity
 from a_wizard.application.attribution import (
     assign_speakers_by_turns,
     attribute_words,
+    filter_track_words,
     load_or_compute_profiles,
     words_to_segments,
 )
+from a_wizard.application.cleanup import cleanup_gains
 from a_wizard.application.dialog import (
     apply_speaker_map,
     default_speaker_glyph,
@@ -35,12 +40,16 @@ from a_wizard.application.dialog import (
     safe_filename,
     segs_to_txt,
 )
+from a_wizard.application.diar_cache import load_or_diarize
 from a_wizard.application.reconciliation import apply_adapter_identity, reconcile_project
+from a_wizard.domain.activity import DEFAULT_ACTIVITY_PARAMS, DEFAULT_CLEANUP_PARAMS
 from a_wizard.domain.dag import ActionKind, NextAction, describe_action, detect_next_action
 from a_wizard.domain.errors import AppError, BlockedError, ExitCode, UsageError
 from a_wizard.domain.freshness import (
     attribute_signature,
+    audio_cleanup_enabled,
     extract_signature,
+    hallucination_silence_threshold,
     mark_stale_downstream,
     merge_signature,
     minimize_signature,
@@ -62,13 +71,33 @@ from a_wizard.domain.models import (
     Word,
     canonical_plain_speaker,
     format_stage_timings,
-    track_scoped_speaker,
     utc_now_iso,
 )
+
+TRACK_FILTER_REL = "meta/track_filter.json"
 
 
 def hf_token_available() -> bool:
     return bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+
+
+def track_words_rel(track_index: int) -> str:
+    return f"transcripts/track_{track_index}.words.json"
+
+
+def clean_track_rel(track_index: int) -> str:
+    return f"tracks/track_{track_index}.clean.wav"
+
+
+def options_summary(project: Project) -> str | None:
+    """Non-default processing options as one line, or None."""
+    parts: list[str] = []
+    if audio_cleanup_enabled(project):
+        parts.append("audio_cleanup=on")
+    threshold = hallucination_silence_threshold(project)
+    if threshold is not None:
+        parts.append(f"hallucination_silence={threshold:g}s")
+    return ", ".join(parts) if parts else None
 
 
 def resolve_target(path: str | Path) -> tuple[Path | None, Path | None, bool]:
@@ -108,12 +137,14 @@ class WizardService:
         asr: Any | None = None,
         diar: Any | None = None,
         media: Any | None = None,
+        gain_mixer: Any | None = None,
     ) -> None:
         self.config = config or ServiceConfig()
         self.repo = YamlProjectRepository()
         self.store = FsArtifactStore()
         self.lock = FileProjectLock()
         self.media = media or FfmpegMediaAdapter()
+        self.gain_mixer = gain_mixer or WavGainMixer()
         self._asr = asr
         self._diar = diar
         self._asr_resolved = asr is not None
@@ -244,8 +275,11 @@ class WizardService:
             f"Project: {project_dir}",
             f"Video:   {project.source.get('path', '?')}",
             f"Mode:    {project.processing_mode.value}",
-            "",
         ]
+        options = options_summary(project)
+        if options:
+            lines.append(f"Options: {options}")
+        lines.append("")
         extract_ok = project.stage("extract").status == StageStatus.SUCCEEDED
         lines.append(f"[{'x' if extract_ok else ' '}] Extract tracks")
         if project.processing_mode == ProcessingMode.MIXDOWN:
@@ -272,6 +306,10 @@ class WizardService:
         if min_ok:
             dialog_dir = project_dir / "dialog"
             lines.append(f"\nTimed minimize: {dialog_dir / 'dialog.minimize.ts.txt'}")
+            lines.append(
+                f"Timed minimize (creation): "
+                f"{dialog_dir / 'dialog.minimize.ts.creation.txt'}"
+            )
             lines.append(f"Minimized dialog: {dialog_dir / 'dialog.minimize.txt'}")
             lines.append(f"Transcript copy: {dialog_dir / 'transcript.txt'}")
         timings = format_stage_timings(project)
@@ -473,6 +511,65 @@ class WizardService:
             "invalidated": invalidated,
         }
 
+    @staticmethod
+    def _retranscribe_tracks(project: Project) -> None:
+        if project.processing_mode != ProcessingMode.PER_TRACK:
+            return
+        for t in project.tracks:
+            if (
+                t.mode in (TrackMode.PLAIN, TrackMode.DIARIZED)
+                and t.status == TrackStatus.TRANSCRIBED
+            ):
+                t.status = TrackStatus.EXTRACTED
+
+    def apply_options(
+        self,
+        project: Project,
+        *,
+        audio_cleanup: bool | None = None,
+        hallucination_silence: Any = ...,
+    ) -> dict[str, Any]:
+        """Update opt-in ASR options; ``...`` / ``None`` leave a value unchanged / clear it.
+
+        Does not persist the project.
+        """
+        defaults = project.transcription_defaults
+        invalidated: list[str] = []
+        changed = False
+        new_threshold: float | None = None
+        if hallucination_silence is not ... and hallucination_silence is not None:
+            new_threshold = float(hallucination_silence)
+            if new_threshold <= 0:
+                raise UsageError(
+                    "--hallucination-silence must be a positive number of seconds",
+                    code="bad_option",
+                )
+        if audio_cleanup is not None and bool(audio_cleanup) != audio_cleanup_enabled(project):
+            if audio_cleanup:
+                defaults["audio_cleanup"] = True
+            else:
+                defaults.pop("audio_cleanup", None)
+            invalidated.extend(mark_stale_downstream(project, "audio_cleanup"))
+            changed = True
+        if (
+            hallucination_silence is not ...
+            and new_threshold != hallucination_silence_threshold(project)
+        ):
+            if new_threshold is None:
+                defaults.pop("hallucination_silence_threshold", None)
+            else:
+                defaults["hallucination_silence_threshold"] = new_threshold
+            invalidated.extend(mark_stale_downstream(project, "asr_config"))
+            changed = True
+        if changed:
+            self._retranscribe_tracks(project)
+        return {
+            "changed": changed,
+            "audio_cleanup": audio_cleanup_enabled(project),
+            "hallucination_silence_threshold": hallucination_silence_threshold(project),
+            "invalidated": list(dict.fromkeys(invalidated)),
+        }
+
     def map_speakers(
         self,
         project: Project,
@@ -543,15 +640,29 @@ class WizardService:
             self.repo.save(project_dir, project)
             raise
 
-    def run_mixdown(self, project_dir: Path, project: Project, *, force: bool = False) -> None:
+    def _cleanup_gains(self, project_dir: Path, project: Project) -> dict[int, Any]:
+        profiles = load_or_compute_profiles(project_dir, project.tracks)
+        return cleanup_gains(build_activity(profiles), DEFAULT_CLEANUP_PARAMS)
+
+    def _mix_with_gains(self, wavs: list[Path], gains: list[Any], out: Path) -> None:
+        self.gain_mixer.mix(
+            wavs,
+            gains,
+            out,
+            frame_ms=DEFAULT_ACTIVITY_PARAMS.window_ms,
+            chunk_ms=DEFAULT_CLEANUP_PARAMS.chunk_ms,
+        )
+
+    @staticmethod
+    def _asr_options(project: Project) -> dict[str, Any]:
+        threshold = hallucination_silence_threshold(project)
+        return {} if threshold is None else {"hallucination_silence_threshold": threshold}
+
+    def run_mixdown(self, project_dir: Path, project: Project) -> None:
         active = [t for t in project.tracks if t.mode != TrackMode.SKIPPED]
         if not active:
             raise UsageError("No non-skipped tracks to mix", code="mixdown_empty")
-        # pending modes still included until configured; after configure only plain/diarized
-        wavs = []
-        for t in project.tracks:
-            if t.mode == TrackMode.SKIPPED:
-                continue
+        for t in active:
             if t.mode == TrackMode.PENDING:
                 raise UsageError(
                     f"track {t.index} still pending; configure modes before mixdown",
@@ -560,13 +671,20 @@ class WizardService:
             path = project_dir / t.wav
             if not path.is_file():
                 raise UsageError(f"WAV missing: {path}", code="wav_missing")
-            wavs.append(path)
+        wavs = [project_dir / t.wav for t in active]
+        cleanup = audio_cleanup_enabled(project)
+        adapter = self.gain_mixer if cleanup else self.media
         sig = mixdown_signature(project)
-        self._begin_stage(project, "mixdown", sig, getattr(self.media, "adapter_id", "ffmpeg"))
+        self._begin_stage(project, "mixdown", sig, getattr(adapter, "adapter_id", "mix"))
         self.repo.save(project_dir, project)
         try:
             out = project_dir / project.mix.wav
-            self.media.mixdown(wavs, out, force=force)
+            if cleanup:
+                gains = self._cleanup_gains(project_dir, project)
+                self._mix_with_gains(wavs, [gains[t.index] for t in active], out)
+            else:
+                # The stage only runs when stale, so an existing mix.wav must be replaced.
+                self.media.mixdown(wavs, out, force=True)
             digest = self.store.digest(project_dir, project.mix.wav)
             self._succeed_stage(project, "mixdown", {project.mix.wav: digest})
             mark_stale_downstream(project, "transcribe:mix")
@@ -594,6 +712,7 @@ class WizardService:
                 compute_type=defaults.get("compute_type", "int8"),
                 device=defaults.get("device", "auto"),
                 initial_prompt=defaults.get("initial_prompt"),
+                **self._asr_options(project),
             )
             # Store raw ASR before attribution
             payload = {
@@ -630,19 +749,11 @@ class WizardService:
         self.repo.save(project_dir, project)
         try:
             profiles = load_or_compute_profiles(project_dir, project.tracks)
-            channel_turns: dict[int, list[SpeakerTurn]] = {}
-            for t in project.tracks:
-                if t.mode != TrackMode.DIARIZED:
-                    continue
-                turns = self.diar.diarize(project_dir / t.wav)
-                channel_turns[t.index] = turns
-                # cache turns
-                self.store.write_json(
-                    project_dir,
-                    f"meta/diar/track_{t.index}.json",
-                    [tr.to_dict() for tr in turns],
-                )
-
+            channel_turns: dict[int, list[SpeakerTurn]] = {
+                t.index: load_or_diarize(project_dir, t, self.diar)
+                for t in project.tracks
+                if t.mode == TrackMode.DIARIZED
+            }
             result = attribute_words(words, project.tracks, profiles, channel_turns)
             payload = {
                 "segments": [s.to_dict() for s in result.segments],
@@ -688,77 +799,98 @@ class WizardService:
         self._begin_stage(project, key, sig, adapter_id)
         self.repo.save(project_dir, project)
         try:
-            if track.mode == TrackMode.PLAIN:
-                result = self.asr.transcribe(
-                    wav,
-                    speaker=track.plain_speaker,
-                    model=opts["model"],
-                    language=opts["language"],
-                    compute_type=opts["compute_type"],
-                    device=opts["device"],
-                    initial_prompt=opts.get("initial_prompt"),
-                )
-                segs = [
-                    Segment(
-                        s.start_ms,
-                        s.end_ms,
-                        s.text,
-                        track.plain_speaker or canonical_plain_speaker(track_index),
-                    )
-                    for s in result.segments
-                ]
-            elif track.mode == TrackMode.DIARIZED:
-                result = self.asr.transcribe(
-                    wav,
-                    speaker=None,
-                    model=opts["model"],
-                    language=opts["language"],
-                    compute_type=opts["compute_type"],
-                    device=opts["device"],
-                    initial_prompt=opts.get("initial_prompt"),
-                )
-                turns = self.diar.diarize(wav)
-                words = assign_speakers_by_turns(result.words, turns, track_index=track_index)
-                segs = words_to_segments(words)
-                if not segs and result.segments:
-                    # fallback: assign by segment midpoint
-                    segs = []
-                    for s in result.segments:
-                        mid = (s.start_ms + s.end_ms) // 2
-                        raw = "SPEAKER_00"
-                        for tr in turns:
-                            if tr.start_ms <= mid < tr.end_ms:
-                                raw = tr.speaker
-                                break
-                        segs.append(
-                            Segment(
-                                s.start_ms,
-                                s.end_ms,
-                                s.text,
-                                track_scoped_speaker(track_index, raw),
-                            )
-                        )
-            else:
+            if track.mode not in (TrackMode.PLAIN, TrackMode.DIARIZED):
                 raise UsageError(
                     f"track {track_index} mode {track.mode.value} cannot be transcribed",
                     code="bad_mode",
                 )
+            asr_wav = wav
+            if audio_cleanup_enabled(project):
+                gains = self._cleanup_gains(project_dir, project)
+                if track_index in gains:
+                    asr_wav = project_dir / clean_track_rel(track_index)
+                    self._mix_with_gains([wav], [gains[track_index]], asr_wav)
+            plain = track.mode == TrackMode.PLAIN
+            result = self.asr.transcribe(
+                asr_wav,
+                speaker=track.plain_speaker if plain else None,
+                model=opts["model"],
+                language=opts["language"],
+                compute_type=opts["compute_type"],
+                device=opts["device"],
+                initial_prompt=opts.get("initial_prompt"),
+                **self._asr_options(project),
+            )
+            asr_words = result.words or [
+                Word(s.start_ms, s.end_ms, s.text) for s in result.segments
+            ]
+            if plain:
+                label = track.plain_speaker or canonical_plain_speaker(track_index)
+                words = [
+                    Word(w.start_ms, w.end_ms, w.text, speaker=label, channel=track_index)
+                    for w in asr_words
+                ]
+                segs = [Segment(s.start_ms, s.end_ms, s.text, label) for s in result.segments]
+            else:
+                turns = load_or_diarize(project_dir, track, self.diar)
+                words = assign_speakers_by_turns(asr_words, turns, track_index=track_index)
+                segs = words_to_segments(words)
 
+            words_rel = track_words_rel(track_index)
             payload = [s.to_dict() for s in segs]
             d1 = self.store.write_json(project_dir, track.segments, payload)
             d2 = self.store.write_text(project_dir, track.transcript_txt, segs_to_txt(segs))
+            d3 = self.store.write_json(project_dir, words_rel, [w.to_dict() for w in words])
             track.status = TrackStatus.TRANSCRIBED
             mark_stale_downstream(project, "merge")
             self._succeed_stage(
                 project,
                 key,
-                {track.segments: d1, track.transcript_txt: d2},
+                {track.segments: d1, track.transcript_txt: d2, words_rel: d3},
             )
             self.repo.save(project_dir, project)
         except Exception as e:
             self._fail_stage(project, key, e)
             self.repo.save(project_dir, project)
             raise
+
+    def _merge_per_track(self, project_dir: Path, project: Project) -> list[Segment]:
+        """Filter each track's own transcript by track activity, then merge by time."""
+        active = [t for t in project.tracks if t.mode in (TrackMode.PLAIN, TrackMode.DIARIZED)]
+        track_words: dict[int, list[Word]] = {}
+        units: dict[int, str] = {}
+        for t in active:
+            words_rel = track_words_rel(t.index)
+            if (project_dir / words_rel).is_file():
+                raw = json.loads(self.store.read_text(project_dir, words_rel))
+                track_words[t.index] = [Word.from_dict(x) for x in raw]
+                units[t.index] = "words"
+            else:
+                raw = json.loads(self.store.read_text(project_dir, t.segments))
+                track_words[t.index] = [
+                    Word(s.start_ms, s.end_ms, s.text, speaker=s.speaker, channel=t.index)
+                    for s in (Segment.from_dict(x) for x in raw)
+                ]
+                units[t.index] = "segments"
+        profiles = load_or_compute_profiles(project_dir, project.tracks)
+        filtered = filter_track_words(track_words, project.tracks, profiles, units=units)
+        self.store.write_json(project_dir, TRACK_FILTER_REL, filtered.report)
+        lists: list[list[Segment]] = []
+        for t in active:
+            kept = filtered.kept.get(t.index, [])
+            if units[t.index] == "words":
+                segs = words_to_segments(kept)
+            else:
+                segs = [
+                    Segment(w.start_ms, w.end_ms, w.text, w.speaker or "SPEAKER_00") for w in kept
+                ]
+            if t.mode == TrackMode.PLAIN:
+                spk = t.plain_speaker or canonical_plain_speaker(t.index)
+                segs = [Segment(s.start_ms, s.end_ms, s.text, spk) for s in segs]
+            elif t.speaker_map:
+                segs = apply_speaker_map(segs, t.speaker_map)
+            lists.append(segs)
+        return merge_by_time(*lists) if lists else []
 
     def run_merge(
         self, project_dir: Path, project: Project, *, allow_raw_speakers: bool = False
@@ -790,25 +922,17 @@ class WizardService:
                     segs = apply_speaker_map(segs, maps)
                 merged = segs
             else:
-                lists: list[list[Segment]] = []
-                for t in project.tracks:
-                    if t.mode == TrackMode.SKIPPED:
-                        continue
-                    raw = json.loads(self.store.read_text(project_dir, t.segments))
-                    segs = [Segment.from_dict(x) for x in raw]
-                    if t.mode == TrackMode.PLAIN:
-                        spk = t.plain_speaker or canonical_plain_speaker(t.index)
-                        segs = [Segment(s.start_ms, s.end_ms, s.text, spk) for s in segs]
-                    elif t.speaker_map:
-                        segs = apply_speaker_map(segs, t.speaker_map)
-                    lists.append(segs)
-                merged = merge_by_time(*lists) if lists else []
+                merged = self._merge_per_track(project_dir, project)
             payload = [s.to_dict() for s in merged]
             d_json = self.store.write_json(project_dir, "dialog/dialog.json", payload)
             d_txt = self.store.write_text(project_dir, "dialog/dialog.txt", segs_to_txt(merged))
             by_spk: dict[str, list[Segment]] = {}
             for s in merged:
                 by_spk.setdefault(s.speaker, []).append(s)
+            speaker_files = {f"spk_{safe_filename(spk)}.txt" for spk in by_spk}
+            for old in (project_dir / "dialog").glob("spk_*.txt"):
+                if old.name not in speaker_files:
+                    old.unlink(missing_ok=True)
             for spk, spk_segs in by_spk.items():
                 self.store.write_text(
                     project_dir,
@@ -839,12 +963,29 @@ class WizardService:
             text_ts = minimize_segments(
                 segs, project.speaker_glyphs, include_start_ts=True
             )
+            now = datetime.now()
+            creation_offset_ms = (
+                ((now.hour * 3600) + (now.minute * 60) + now.second) * 1000
+                + now.microsecond // 1000
+            )
+            text_ts_creation = minimize_segments(
+                segs,
+                project.speaker_glyphs,
+                include_start_ts=True,
+                ts_offset_ms=creation_offset_ms,
+            )
             text = minimize_segments(segs, project.speaker_glyphs)
             self.store.write_text(project_dir, "dialog/dialog.minimize.ts.txt", text_ts)
+            self.store.write_text(
+                project_dir, "dialog/dialog.minimize.ts.creation.txt", text_ts_creation
+            )
             digest = self.store.write_text(project_dir, "dialog/dialog.minimize.txt", text)
             self.store.write_text(project_dir, "dialog/transcript.txt", text)
             # Also digest the other required minimize outputs for verification.
             d_ts = self.store.digest(project_dir, "dialog/dialog.minimize.ts.txt")
+            d_ts_creation = self.store.digest(
+                project_dir, "dialog/dialog.minimize.ts.creation.txt"
+            )
             d_copy = self.store.digest(project_dir, "dialog/transcript.txt")
             self._succeed_stage(
                 project,
@@ -852,6 +993,7 @@ class WizardService:
                 {
                     "dialog/dialog.minimize.txt": digest,
                     "dialog/dialog.minimize.ts.txt": d_ts,
+                    "dialog/dialog.minimize.ts.creation.txt": d_ts_creation,
                     "dialog/transcript.txt": d_copy,
                 },
             )

@@ -63,10 +63,13 @@ class TranscriptionEngine(Protocol):
         compute_type: str = "int8",
         device: str = "auto",
         initial_prompt: str | None = None,
+        hallucination_silence_threshold: float | None = None,
     ) -> TranscriptResult: ...
 
 
 class DiarizationEngine(Protocol):
+    """Engines may set ``cacheable = False`` to bypass the per-track turn cache."""
+
     adapter_id: str
 
     def diarize(
@@ -81,6 +84,18 @@ class DiarizationEngine(Protocol):
 
 class ChannelEnergyProfiler(Protocol):
     def profile(self, wav: Path, *, window_ms: int = 20) -> Any: ...
+
+
+class GainMixer(Protocol):
+    def mix(
+        self,
+        wavs: list[Path],
+        gains: list[Any],
+        out: Path,
+        *,
+        frame_ms: int = 20,
+        chunk_ms: int = 30_000,
+    ) -> Path: ...
 
 
 class RunObserver(Protocol):

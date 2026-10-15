@@ -76,6 +76,11 @@ def _completed_mixdown(project_dir: Path) -> Project:
             "dialog/dialog.minimize.ts.txt",
             "ST0: SPEAKER_T0\n\n[00:00:00.000] ST0: hi\n",
         ),
+        "dialog/dialog.minimize.ts.creation.txt": store.write_text(
+            project_dir,
+            "dialog/dialog.minimize.ts.creation.txt",
+            "ST0: SPEAKER_T0\n\n[15:30:00.000] ST0: hi\n",
+        ),
         "dialog/transcript.txt": store.write_text(
             project_dir, "dialog/transcript.txt", "ST0: SPEAKER_T0\n\nST0: hi\n"
         ),
