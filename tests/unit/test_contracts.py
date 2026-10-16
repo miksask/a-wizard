@@ -10,9 +10,6 @@ import pytest
 jsonschema = pytest.importorskip("jsonschema")
 
 ROOT = Path(__file__).resolve().parents[2]
-MIX_SCHEMA = json.loads(
-    (ROOT / "specs/004-pipeline-hardening/contracts/mix.segments.schema.json").read_text()
-)
 ENERGY_SCHEMA = json.loads(
     (ROOT / "specs/004-pipeline-hardening/contracts/energy-cache.schema.json").read_text()
 )
@@ -22,7 +19,7 @@ MANIFEST_SCHEMA = json.loads(
 REPORT_SCHEMA = json.loads(
     (ROOT / "specs/005-multitrack-attribution/contracts/attribution-report.schema.json").read_text()
 )
-MIX_V2_SCHEMA = json.loads(
+MIX_SCHEMA = json.loads(
     (ROOT / "specs/005-multitrack-attribution/contracts/mix.segments.schema.json").read_text()
 )
 
@@ -59,7 +56,7 @@ def test_attribution_report_matches_schema():
     assert result.report["dropped_count"] == 1
 
 
-def test_mix_segments_with_flags_match_both_schemas():
+def test_mix_segments_with_flags_match_canonical_schema():
     result = _synthetic_attribution()
     payload = {
         "segments": [s.to_dict() for s in result.segments],
@@ -67,7 +64,6 @@ def test_mix_segments_with_flags_match_both_schemas():
     }
     assert any(w.get("dropped") for w in payload["words"])
     jsonschema.validate(payload, MIX_SCHEMA)
-    jsonschema.validate(payload, MIX_V2_SCHEMA)
 
 
 def test_manifest_with_options_matches_schema():

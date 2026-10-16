@@ -26,7 +26,8 @@
 
 ### D5. Independent ASR and diarization ports
 - **Decision**: `TranscriptionEngine` and `DiarizationEngine` separate; attribution in application.
-- **Rationale**: Allows swapping backends; WhisperX can implement both or only one.
+- **Rationale**: Allows swapping backends; a single adapter may implement both or only one.
+- **Superseded note**: The original example that WhisperX could implement both ports is obsolete; WhisperX was removed in [002-mlx-mixdown-pipeline](../002-mlx-mixdown-pipeline/research.md).
 - **Alternatives**: Single combined diarized pipeline only.
 
 ### D6. Default backends
@@ -42,6 +43,7 @@
 
 ### D8. Non-interactive policy
 - **Decision**: `--preset obs-interview`; block raw speakers unless `--allow-raw-speakers`.
+- **Superseded**: Blocking merge on unreviewed labels was dropped. Fixed `SPEAKER_T{n}` / `SPEAKER_T{n}D{k}` ids (D9 / FR-005) are merge-ready without review; `--allow-raw-speakers` remains for CLI compatibility only and does not change merge.
 - **Rationale**: Avoid silent wrong roles from track-index guessing.
 - **Alternatives**: Legacy `--yes` defaults.
 
@@ -60,13 +62,13 @@
 | Topic | Outcome |
 |-------|---------|
 | Legacy compatibility | Behavioral parity only; no in-place v1 manifest read |
-| Device policy | auto→cuda if available else cpu; no MPS guarantee for WhisperX |
+| Device policy | auto→cuda if available else cpu; no MPS guarantee for WhisperX *(superseded: Apple Silicon defaults are mlx-whisper + FluidAudio/sherpa-onnx per [002 research](../002-mlx-mixdown-pipeline/research.md))* |
 | Token handling | env only (`HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`) |
 | Overlap dedup | Out of scope v1 |
 | Model cache | In-process per run; no cross-process shared cache required |
 
 ## Open risks
 
-- WhisperX/Apple Silicon reliability → document CPU fallback.
+- WhisperX/Apple Silicon reliability → document CPU fallback. *(superseded: WhisperX removed; see [002 research](../002-mlx-mixdown-pipeline/research.md))*
 - First-run model download latency → warn before heavy stages.
 - Non-deterministic ASR → tests use mocks; real engines opt-in slow.

@@ -1,40 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://a-wizard.local/schemas/mix.segments.schema.json",
-  "title": "MixSegments",
+  "$comment": "Stub only. Duplicate body removed. Canonical mix segments schema (silent/dropped word flags): specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
+  "title": "MixSegments (redirect stub)",
+  "description": "Obsolete duplicate. Use specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
   "type": "object",
-  "required": ["segments", "words"],
-  "additionalProperties": true,
-  "properties": {
-    "segments": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["start_ms", "end_ms", "text", "speaker"],
-        "additionalProperties": true,
-        "properties": {
-          "start_ms": { "type": "integer", "minimum": 0 },
-          "end_ms": { "type": "integer", "minimum": 0 },
-          "text": { "type": "string", "minLength": 1 },
-          "speaker": { "type": "string", "minLength": 1 }
-        }
-      }
-    },
-    "words": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["start_ms", "end_ms", "text"],
-        "additionalProperties": true,
-        "properties": {
-          "start_ms": { "type": "integer", "minimum": 0 },
-          "end_ms": { "type": "integer", "minimum": 0 },
-          "text": { "type": "string", "minLength": 1 },
-          "speaker": { "type": ["string", "null"] },
-          "channel": { "type": ["integer", "null"] },
-          "ambiguous": { "type": "boolean" }
-        }
-      }
-    }
-  }
+  "not": {}
 }

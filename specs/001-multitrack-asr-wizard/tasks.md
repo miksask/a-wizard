@@ -23,7 +23,7 @@
 
 - [x] T011 [P] [US1] Media ffmpeg adapter in `src/a_wizard/adapters/media/ffmpeg.py`
 - [x] T012 [P] [US1] Mock + faster-whisper ASR adapters
-- [x] T013 [P] [US1] Mock + WhisperX diarization adapters
+- [x] T013 [P] [US1] Mock + WhisperX diarization adapters *(WhisperX adapter removed in 002-mlx-mixdown-pipeline; mock diarization retained)*
 - [x] T014 [US1] Merge/minimize services in `src/a_wizard/application/dialog.py`
 - [x] T015 [US1] `run` orchestration producing project artifacts
 - [x] T016 [US1] Unit/integration tests with mock adapters for full pipeline

@@ -1,7 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://a-wizard.local/schemas/mix.segments.schema.json",
-  "title": "MixSegments",
+  "$comment": "Historical copy from feature 004 (ms form; no silent/dropped). Canonical schema with silent/dropped: specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
+  "title": "MixSegments (004 historical)",
+  "description": "Historical. Prefer specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
   "type": "object",
   "required": ["segments", "words"],
   "additionalProperties": true,

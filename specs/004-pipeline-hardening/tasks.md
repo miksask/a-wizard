@@ -40,7 +40,7 @@
 
 ## Phase 5: Contracts + fingerprint
 
-- [x] T013 Update `specs/002-mlx-mixdown-pipeline/contracts/segments.schema.json` to ms form; keep 004 copy in sync
+- [x] T013 Update `specs/002-mlx-mixdown-pipeline/contracts/segments.schema.json` to ms form; keep 004 copy in sync *(sync with 002 no longer required; 002 is a stub; canonical schema is 005-multitrack-attribution/contracts/mix.segments.schema.json)*
 - [x] T014 Add `jsonschema` to dev extras; contract tests for manifest/mix/dialog/energy sidecar
 - [x] T015 Stronger source fingerprint in `adapters/media/ffmpeg.py` + unit coverage
 

@@ -2,6 +2,12 @@
 
 **Branch**: `001-multitrack-asr-wizard` | **Date**: 2026-08-06 | **Spec**: [spec.md](./spec.md)
 
+> **Historical snapshot (2026-08-06).** This plan records the original per-track design.
+> Apple Silicon defaults and mixdown mode are defined by
+> [002-mlx-mixdown-pipeline](../002-mlx-mixdown-pipeline/plan.md)
+> (mlx-whisper, FluidAudio, sherpa-onnx; WhisperX removed). Do not treat the
+> dependency line below as current.
+
 ## Summary
 
 The local `a-wizard` CLI implements a resume-safe multitrack ASR pipeline with a typed manifest, freshness signatures, replaceable media/ASR/diarization adapters, and canonical `dialog.json` → minimize output.
@@ -9,7 +15,8 @@ The local `a-wizard` CLI implements a resume-safe multitrack ASR pipeline with a
 ## Technical Context
 
 **Language/Version**: Python 3.13  
-**Primary Dependencies**: uv, Typer, Rich, PyYAML, ffmpeg/ffprobe; optional faster-whisper, whisperx  
+**Primary Dependencies**: uv, Typer, Rich, PyYAML, ffmpeg/ffprobe; optional faster-whisper, whisperx *(superseded by 002: mlx-whisper + FluidAudio/sherpa-onnx)*  
+
 **Storage**: Filesystem project dir + versioned YAML manifest  
 **Testing**: pytest (+ coverage), synthetic fixtures, mock adapters  
 **Target Platform**: macOS / Linux CLI  

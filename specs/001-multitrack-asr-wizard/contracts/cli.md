@@ -1,5 +1,11 @@
 # CLI Contract: a-wizard
 
+> **Not the live contract.** Historical snapshot of the original per-track CLI surface
+> from feature 001. Current commands and flags: repository [README.md](../../../README.md)
+> and contracts under [003](../../003-configure-cli/contracts/cli.md),
+> [004](../../004-pipeline-hardening/contracts/cli.md), and
+> [005](../../005-multitrack-attribution/contracts/cli.md).
+
 ## Entry point
 
 ```bash

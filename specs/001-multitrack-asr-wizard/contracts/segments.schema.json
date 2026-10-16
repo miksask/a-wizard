@@ -1,7 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local/a-wizard/segments.schema.json",
-  "title": "a-wizard Segments",
+  "$comment": "DEAD / historical. Array-of-segments form from feature 001. Not used by tests or emitters. Canonical mix segments schema (object with segments+words, including silent/dropped): specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
+  "title": "a-wizard Segments (obsolete)",
+  "description": "Obsolete. Do not use. Canonical schema is specs/005-multitrack-attribution/contracts/mix.segments.schema.json",
   "type": "array",
   "items": {
     "type": "object",

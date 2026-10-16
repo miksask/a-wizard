@@ -1,3 +1,19 @@
+<!--
+Sync Impact Report
+- Version change: 1.0.0 → 1.1.0
+- Modified principles: none (I–V unchanged)
+- Product Constraints: workflow chain no longer includes speaker review;
+  fixed SPEAKER_T{n}/SPEAKER_T{n}D{k} ids; --allow-raw-speakers is CLI-compat only
+- Added sections: none
+- Removed sections: none
+- Templates requiring updates:
+  - .specify/templates/plan-template.md — ✅ no change (no speaker-review wording)
+  - .specify/templates/spec-template.md — ✅ no change
+  - .specify/templates/tasks-template.md — ✅ no change
+  - README.md — ✅ no change (already matches)
+- Follow-up TODOs: none in constitution; historical 001/002 docs updated separately
+-->
+
 # a-wizard Constitution
 
 ## Core Principles
@@ -20,9 +36,9 @@ Automated tests use only synthetic segments, short ffmpeg fixtures, and mock ada
 ## Product Constraints
 
 - The primary v1 interface is a local interactive CLI.
-- Functional parity with legacy asr-wizard workflows: extract → configure → transcribe → speaker review → merge → minimize.
+- Functional parity with legacy asr-wizard workflows: extract → configure → transcribe → attribute → merge → minimize. There is no interactive role-mapping gate. Speaker ids are fixed: plain → `SPEAKER_T{n}`, diarized voice → `SPEAKER_T{n}D{k}`. An optional `speakers map` MAY remap them for display.
 - Old v1 `manifest.yaml` files and exact legacy CLI flags are unsupported; familiar output filenames are retained.
-- Non-interactive mode requires an explicit preset (`obs-interview`); raw `SPEAKER_XX` labels are allowed in final output only through an explicit option.
+- Non-interactive mode requires an explicit preset (`obs-interview`). `--allow-raw-speakers` is retained for CLI compatibility and does not change merge behavior.
 - Target platforms are macOS and Linux; Windows support is not guaranteed.
 - LLM post-processing (summary) is outside the v1 scope.
 
@@ -38,4 +54,4 @@ Automated tests use only synthetic segments, short ffmpeg fixtures, and mock ada
 
 The Constitution takes precedence over implementation convenience. Violations are documented with justification in the plan's Complexity Tracking section. Constitution changes require updating the amendment date and reviewing related specifications and plans.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-06 | **Last Amended**: 2026-08-06
+**Version**: 1.1.0 | **Ratified**: 2026-08-06 | **Last Amended**: 2026-10-16

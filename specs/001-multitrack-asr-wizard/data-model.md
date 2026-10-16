@@ -58,6 +58,10 @@
 
 ## Stage DAG
 
+> **Historical snapshot (per-track).** Not the live mixdown DAG. Current stage order
+> and modes: repository [README.md](../../README.md) and specs
+> [002](../002-mlx-mixdown-pipeline/)–[005](../005-multitrack-attribution/).
+
 ```text
 probe/extract
   → configure gates (project prompt + language; track mode only)

@@ -154,7 +154,7 @@ The operator can opt in to cleaner ASR input: inactive tracks are attenuated and
 - **SC-001**: On the two reference recordings, plain-speaker lines drop from 311 and 85 to fewer than 30 and 12 while every word with clear microphone speech stays on the plain speaker.
 - **SC-002**: Across all available two-track recordings, no word with clear desktop speech and a silent microphone is attributed to the microphone, and at least 99 % of clear microphone words are attributed to the microphone.
 - **SC-003**: Synthetic four-room fixture with crosstalk and gain differences attributes at least 95 % of words to the correct room.
-- **SC-004**: Re-attributing an existing 1.5 h recording takes under 30 s after diarization is cached (no ASR).
+- **SC-004**: Re-attributing an existing 1.5 h recording takes under 30 s after diarization is cached (no ASR). Manual criterion on a local recording; not covered by CI.
 - **SC-005**: Full local quality gate passes with coverage ≥ 70 %.
 
 ## Assumptions
