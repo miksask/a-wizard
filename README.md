@@ -6,7 +6,7 @@ Local, resume-safe multitrack ASR — fast on Apple Silicon (mlx-whisper turbo ~
   <img src="A-WIZARD.png" alt="UnGPT icon"/>
 </p>
 
-The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, `specs/004-pipeline-hardening/`, and `specs/005-multitrack-attribution/`.
+The project is organized with [GitHub Spec Kit](https://github.com/github/spec-kit): see `.specify/`, `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, `specs/004-pipeline-hardening/`, `specs/005-multitrack-attribution/`, and `specs/006-speak/`.
 
 ## Features
 
@@ -17,8 +17,9 @@ The project is organized with [GitHub Spec Kit](https://github.com/github/spec-k
 - ASR-free diarization: FluidAudio (CoreML), sherpa-onnx, and experimental speakrs (cached per track)
 - Fallback ASR: faster-whisper (non-Apple platforms)
 - Merge → canonical `dialog.json` → `dialog.minimize.ts.txt` / `dialog.minimize.ts.creation.txt` → `dialog.minimize.txt` (+ `transcript.txt` copy)
+- **Speak** (optional): synthesize `dialog.json` (or a standalone `.txt`) to WAV/MP3 via local mlx-audio — not part of `run`
 - Atomic manifest, project lock, freshness/invalidation
-- Commands: `run`, `status`, `plan`, `init`, `configure`, `options`, `track`, `speakers`, `stage`, `doctor`, `bench diar`
+- Commands: `run`, `status`, `plan`, `init`, `configure`, `options`, `track`, `speakers`, `stage`, `speak`, `doctor`, `bench diar`
 
 ## Installation
 
@@ -38,6 +39,10 @@ uv sync --extra asr
 # Optional Python diarization quality fallback:
 uv sync --extra diar-pyannote
 export HF_TOKEN=hf_...   # only for pyannote-community-1
+
+# Optional TTS (Apple Silicon) for `a-wizard speak`:
+# pulls mlx-audio plus Kokoro's text frontend (misaki)
+uv sync --extra tts
 ```
 
 ### FluidAudio CLI (Apple Silicon, CoreML/ANE)
@@ -194,6 +199,49 @@ uv run a-wizard options /path/to/recording.project --no-audio-cleanup --no-hallu
 ```
 
 `--audio-cleanup` helps recordings with several noisy microphones; it can attenuate very quiet speech in a very noisy microphone, so check the result.
+
+### Speak (TTS)
+
+After merge, synthesize the dialog locally (Apple Silicon, mlx-audio). This is an explicit command — `a-wizard run` never loads TTS models.
+
+```bash
+uv sync --extra tts
+uv run a-wizard speak /path/to/recording.project
+# → dialog/speech.wav + dialog/speech.json
+
+# arbitrary text (no project lock): one voice, colons are spoken as text
+uv run a-wizard speak notes.txt
+# → notes.speech.wav
+
+# opt in to "Name: text" lines as separate speakers
+uv run a-wizard speak notes.txt --speakers-from-prefix
+
+# timeline aligned to original timings; speed up overruns ≤1.5×
+uv run a-wizard speak recording.project --timeline --fit
+
+# clone voices from project tracks (6–12 s refs under dialog/speech/refs/)
+uv run a-wizard speak recording.project --clone all
+```
+
+Default models (overridable per language):
+
+| Language | Default | Notes |
+|----------|---------|-------|
+| en | `mlx-community/Kokoro-82M-bf16` | Fast; preset voices |
+| ru, pl | `mlx-community/chatterbox-multilingual-v3` | Needs a reference voice. Without `--ref` / `--clone`, speak builds one locally with Kokoro and reuses it |
+
+Override priority: built-in default < `A_WIZARD_TTS_MODEL_RU=…` < project `speak.yaml` < `--model ru=…`.
+
+```bash
+# faster English / different Russian model
+uv run a-wizard speak PROJECT --model en=mlx-community/Kokoro-82M-8bit \
+  --model ru=mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit
+
+# pin a Kokoro voice for one speaker
+uv run a-wizard speak PROJECT --voice SPEAKER_T0=am_adam
+```
+
+Cloning stays on-device (refs cut from your project tracks or `--ref SPEAKER=path.wav`). Per-line cache under `dialog/speech/cache/` makes re-runs cheap when only one voice changes.
 
 ## Tests
 

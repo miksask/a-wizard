@@ -28,6 +28,15 @@ diar-onnx = [
 diar-pyannote = [
     "pyannote.audio>=3.3.0",
 ]
+tts = [
+    "mlx-audio>=0.6.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Kokoro text frontend is optional inside mlx-audio.
+    "misaki>=0.9.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "num2words>=0.5.14; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "phonemizer-fork>=3.3.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "espeakng-loader>=0.2.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "spacy>=3.8.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -64,6 +73,7 @@ omit = [
     "*/a_wizard/adapters/diarization/fluidaudio.py",
     "*/a_wizard/adapters/diarization/sherpa.py",
     "*/a_wizard/adapters/diarization/speakrs.py",
+    "*/a_wizard/adapters/tts/mlx_audio.py",
 ]
 
 [tool.coverage.report]

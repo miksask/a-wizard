@@ -703,6 +703,138 @@ def stage_cmd(
         raise typer.Exit(_handle_error(e)) from e
 
 
+@app.command("speak")
+def speak_cmd(
+    target: str = typer.Argument(..., help="Project directory or .txt file"),
+    timeline: bool = typer.Option(False, "--timeline", help="Place segments at start_ms"),
+    fit: bool = typer.Option(
+        False, "--fit", help="With --timeline, speed up overruns (≤1.5×)"
+    ),
+    pause_ms: int = typer.Option(250, "--pause-ms", help="Pause between sequential lines"),
+    language: str | None = typer.Option(
+        None, "--language", help="Force language (auto|en|ru|pl|…)"
+    ),
+    model: list[str] | None = typer.Option(
+        None, "--model", help="LANG=MODEL_ID (repeatable)"
+    ),
+    voice: list[str] | None = typer.Option(
+        None, "--voice", help="SPEAKER=VOICE (repeatable)"
+    ),
+    clone: list[str] | None = typer.Option(
+        None,
+        "--clone",
+        help="Clone voice(s): --clone all, or --clone SPEAKER_T0 (repeatable)",
+    ),
+    ref: list[str] | None = typer.Option(
+        None, "--ref", help="SPEAKER=path.wav reference (repeatable)"
+    ),
+    speed: float = typer.Option(1.0, "--speed", help="Speaking rate"),
+    fmt: str = typer.Option("wav", "--format", help="wav|mp3"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output audio path"),
+    force: bool = typer.Option(False, "--force", help="Regenerate even if fresh"),
+    mock: bool = typer.Option(False, "--mock", help="Use fake TTS (tests)"),
+    list_voices: bool = typer.Option(
+        False, "--list-voices", help="List voices for the resolved model and exit"
+    ),
+    speakers_from_prefix: bool = typer.Option(
+        False,
+        "--speakers-from-prefix/--no-speakers-from-prefix",
+        help="In txt mode, treat 'Name: text' lines as separate speakers",
+    ),
+) -> None:
+    """Synthesize speech from dialog.json or a text file (not part of run)."""
+    from a_wizard.adapters.tts.registry import (
+        parse_kv_flags,
+        resolve_model_id,
+        resolve_tts_adapter,
+    )
+    from a_wizard.application.speak import SpeakOptions, speak_project, speak_txt
+    from a_wizard.domain.languages import normalize_language
+
+    try:
+        if language:
+            language = normalize_language(language)
+
+        models = parse_kv_flags(model, what="model")
+        voices = parse_kv_flags(voice, what="voice")
+        refs_raw = parse_kv_flags(ref, what="ref")
+        refs = {k: Path(v).expanduser().resolve() for k, v in refs_raw.items()}
+
+        clone_all = False
+        clone_speakers: set[str] = set()
+        for item in clone or []:
+            if item.lower() in ("*", "all"):
+                clone_all = True
+            else:
+                clone_speakers.add(item)
+
+        if list_voices:
+            lang = language or "en"
+            if lang == "auto":
+                lang = "en"
+            model_id = resolve_model_id(lang, flag_models=models)
+            engine = resolve_tts_adapter(model_id, mock=mock)
+            console.print(f"Model: {model_id}")
+            for v in engine.voices():
+                out.print(v)
+            raise typer.Exit(0)
+
+        fmt_l = fmt.lower().strip()
+        if fmt_l not in ("wav", "mp3"):
+            raise UsageError("--format must be wav or mp3", code="speak_config")
+
+        opts = SpeakOptions(
+            timeline=timeline,
+            fit=fit,
+            pause_ms=pause_ms,
+            language=language,
+            models=models,
+            voices=voices,
+            clone_all=clone_all,
+            clone_speakers=clone_speakers,
+            refs=refs,
+            speed=speed,
+            format=fmt_l,
+            output=output,
+            force=force,
+            mock=mock,
+            speakers_from_prefix=speakers_from_prefix,
+        )
+
+        def printer(msg: str) -> None:
+            console.print(msg)
+
+        target_path = Path(target).expanduser()
+        if target_path.is_file() and target_path.suffix.lower() in {
+            ".txt",
+            ".md",
+            ".text",
+        }:
+            result = speak_txt(target_path.resolve(), opts, log=printer)
+            out.print(str(result.output))
+            raise typer.Exit(0)
+
+        # Project mode (lock)
+        svc = _service(mock=False, metadata_only=True)
+        project_dir, _, needs_init = resolve_target(target)
+        if needs_init or project_dir is None or not svc.repo.exists(project_dir):
+            raise UsageError(
+                "Not an a-wizard project (or missing dialog). "
+                "Pass a .project directory or a .txt file.",
+                code="target_invalid",
+            )
+        svc.lock.acquire(project_dir)
+        try:
+            project = svc.load(project_dir)
+            result = speak_project(project_dir, project, opts, log=printer)
+            out.print(str(result.output))
+        finally:
+            svc.lock.release(project_dir)
+    except AppError as e:
+        raise typer.Exit(_handle_error(e)) from e
+    raise typer.Exit(0)
+
+
 @app.command("doctor")
 def doctor_cmd(
     target: str | None = typer.Argument(None),
@@ -769,6 +901,15 @@ def doctor_cmd(
         out.print("OK pyannote.audio (optional community-1)")
     except ImportError:
         out.print("OPTIONAL pyannote.audio not installed (uv sync --extra diar-pyannote)")
+
+    try:
+        import mlx_audio  # noqa: F401
+
+        out.print("OK mlx-audio installed")
+    except ImportError:
+        out.print("OPTIONAL mlx-audio not installed (uv sync --extra tts)")
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            out.print("  Hint (Apple Silicon): uv sync --extra tts")
 
     swift = shutil.which("swift")
     if swift:

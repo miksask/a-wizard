@@ -1,17 +1,16 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 → 1.1.0
+- Version change: 1.1.0 → 1.2.0
 - Modified principles: none (I–V unchanged)
-- Product Constraints: workflow chain no longer includes speaker review;
-  fixed SPEAKER_T{n}/SPEAKER_T{n}D{k} ids; --allow-raw-speakers is CLI-compat only
+- Product Constraints: optional `speak` command consumes dialog.json; outside run chain
 - Added sections: none
 - Removed sections: none
 - Templates requiring updates:
-  - .specify/templates/plan-template.md — ✅ no change (no speaker-review wording)
+  - .specify/templates/plan-template.md — ✅ no change
   - .specify/templates/spec-template.md — ✅ no change
   - .specify/templates/tasks-template.md — ✅ no change
-  - README.md — ✅ no change (already matches)
-- Follow-up TODOs: none in constitution; historical 001/002 docs updated separately
+  - README.md — Speak section added with feature
+- Follow-up TODOs: none
 -->
 
 # a-wizard Constitution
@@ -28,7 +27,7 @@ Project state is the single source of truth. Every completed stage is recorded a
 `done` statuses alone are insufficient. Stage freshness is determined by a signature: normalized configuration + upstream artifact digests + algorithm version + adapter/model identity. Input changes automatically invalidate only dependent stages.
 
 ### IV. Ports and Adapters
-The domain and application layers do not depend on ffmpeg, Whisper, WhisperX, or YAML. Media, ASR, and diarization are hidden behind Protocol ports. Heavy dependencies are imported only when an adapter is selected. Version 1 uses a built-in registry; dynamic plugins are optional.
+The domain and application layers do not depend on ffmpeg, Whisper, WhisperX, or YAML. Media, ASR, diarization, and TTS are hidden behind Protocol ports. Heavy dependencies are imported only when an adapter is selected. Version 1 uses a built-in registry; dynamic plugins are optional.
 
 ### V. Synthetic Tests First
 Automated tests use only synthetic segments, short ffmpeg fixtures, and mock adapters. Real interviews, WAV files, and tokens are excluded from normal CI. Adapter contract tests are identical for fake and real implementations.
@@ -41,6 +40,7 @@ Automated tests use only synthetic segments, short ffmpeg fixtures, and mock ada
 - Non-interactive mode requires an explicit preset (`obs-interview`). `--allow-raw-speakers` is retained for CLI compatibility and does not change merge behavior.
 - Target platforms are macOS and Linux; Windows support is not guaranteed.
 - LLM post-processing (summary) is outside the v1 scope.
+- Optional `speak` command synthesizes audio from `dialog.json` (or a standalone text file) via local TTS adapters; it is outside the `run` chain and MUST NOT be invoked by `a-wizard run`.
 
 ## Development Workflow
 
@@ -54,4 +54,4 @@ Automated tests use only synthetic segments, short ffmpeg fixtures, and mock ada
 
 The Constitution takes precedence over implementation convenience. Violations are documented with justification in the plan's Complexity Tracking section. Constitution changes require updating the amendment date and reviewing related specifications and plans.
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-06 | **Last Amended**: 2026-10-16
+**Version**: 1.2.0 | **Ratified**: 2026-08-06 | **Last Amended**: 2026-10-28

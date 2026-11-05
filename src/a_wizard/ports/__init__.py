@@ -100,3 +100,24 @@ class GainMixer(Protocol):
 
 class RunObserver(Protocol):
     def event(self, name: str, **fields: Any) -> None: ...
+
+
+class TtsEngine(Protocol):
+    """Text-to-speech adapter. Returns mono float32 samples in [-1, 1]."""
+
+    adapter_id: str
+    sample_rate: int
+    has_preset_voices: bool
+
+    def voices(self) -> list[str]: ...
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        lang: str,
+        voice: str | None = None,
+        ref_audio: Path | None = None,
+        ref_text: str | None = None,
+        speed: float = 1.0,
+    ) -> Any: ...  # numpy ndarray float32 mono

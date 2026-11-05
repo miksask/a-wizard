@@ -5,7 +5,7 @@ This directory is a standalone `a-wizard` project organized with GitHub Spec Kit
 ## Getting Started
 
 1. Principles: `.specify/memory/constitution.md`
-2. Specifications: `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, `specs/004-pipeline-hardening/`, `specs/005-multitrack-attribution/`
+2. Specifications: `specs/001-multitrack-asr-wizard/`, `specs/002-mlx-mixdown-pipeline/`, `specs/003-configure-cli/`, `specs/004-pipeline-hardening/`, `specs/005-multitrack-attribution/`, `specs/006-speak/`
 3. Code: `src/a_wizard/`
 4. Quickstart: `README.md`
 
@@ -13,7 +13,7 @@ This directory is a standalone `a-wizard` project organized with GitHub Spec Kit
 
 Skills are installed in `.cursor/skills/` and `.claude/skills/` (`speckit-constitution`, `speckit-specify`, …).
 
-Active feature: `specs/005-multitrack-attribution` (see `.specify/feature.json`).
+Active feature: `specs/006-speak` (see `.specify/feature.json`).
 
 ## Rules
 
@@ -23,3 +23,4 @@ Active feature: `specs/005-multitrack-attribution` (see `.specify/feature.json`)
 - On Apple Silicon: ASR = mlx-whisper, diarization = FluidAudio/sherpa-onnx; WhisperX has been removed.
 - Default mode: `processing_mode=mixdown` (one ASR pass on the mix plus energy attribution).
 - Attribution compares tracks by level over each track's own noise floor (never raw RMS across tracks); see `specs/005-multitrack-attribution/research.md`.
+- TTS (`a-wizard speak`) uses mlx-audio behind `--extra tts`; it is not a pipeline stage and is never invoked by `a-wizard run`.
